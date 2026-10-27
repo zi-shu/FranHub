@@ -10,8 +10,8 @@
 
 ## v0.1.0
 
-- 备份页拆成两栏：聊天记录包与工作区包分开发出。
 - 新增工作区与 Linux 环境备份：逐工作区勾选，各打一个 tar。
 - 新增恢复模式：全盘替换（保留回滚副本）、增量合并。
 - 备份包附带 `workspaces/manifest.json` 与 `packages.json`，后者记录 apk、dpkg、pip、npm 的名称与版本。
 - 缓存与临时目录不进备份：`tmp`、`var/cache`、`var/log`、`__pycache__`、npm 与 pip 的 cache。
+- 备份页拆成两栏：聊天记录包与工作区包分开发出。
