@@ -60,6 +60,6 @@
 
 ### *Human vision. AI precision.*
 
-<sub>人的判断，机器的精度</sub>
+<sub>人类设计，AI智造</sub>
 
 </div>
