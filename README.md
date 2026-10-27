@@ -40,12 +40,26 @@
 - 只有中文与英文补了新增文案，其余语言回退英文。
 
 ## 版本记录
-V0.1.0 新增备份和恢复Linux环境和Workspace功能。
-V0.2.0 将shell执行时间从600s强制限制改为7200s(暂时解决措施)
-详见 [CHANGES.md](CHANGES.md)。
 
-### 说在最后
-- 本项目基本所有工作均由LLM搭配名为RikkaHub的Android Light Agent完成。LLM为Deepseek-v4-flash。
-- 感谢RikkaHub作者@re-ove，感谢995fuviokd-crypto（即使他没有遵循AGPL协议）
+- `v0.1.0`：新增备份与恢复 Linux 环境、工作区。
+- `v0.2.0`：单条 shell 命令的执行时间上限从 600 秒改为 7200 秒（临时措施）。
 
-Human vision. AI precision
+逐条明细见 [CHANGES.md](CHANGES.md)。
+
+## 说在最后
+
+本项目绝大部分工作由 LLM 完成。模型是 `DeepSeek-V4-Flash`，跑在 Android 端 Agent [RikkaHub](https://github.com/rikkahub/rikkahub) 里：自己读文件、写代码、跑构建、看报错再改。
+
+感谢 RikkaHub 的作者 [@re-ovo](https://github.com/re-ovo)。没有这个 Agent，就没有这个项目。
+
+感谢 [@995fuviokd-crypto](https://github.com/995fuviokd-crypto) 的改款带来的思路。该改款只发布二进制、未公开源码，与 AGPL-3.0 的要求不符；本项目没有使用其代码，相关功能按行为重新实现。
+
+---
+
+<div align="center">
+
+### *Human vision. AI precision.*
+
+<sub>人的判断，机器的精度</sub>
+
+</div>
