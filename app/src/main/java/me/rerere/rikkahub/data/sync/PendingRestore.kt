@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.sync
 
+import me.rerere.rikkahub.data.backup.WorkspaceBackup
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -64,10 +65,13 @@ internal class PendingRestore(
                     if (entry.install) move(source, target)
                 }
             }
+            // 工作区与 Linux 环境按目录换入，放在数据库与附件之后就位
+            WorkspaceBackup.apply(pending, filesDir)
             val settings = File(pending, "settings.json")
             if (settings.isFile) restoreSettings(settings.readText())
         } catch (e: Exception) {
             try {
+                WorkspaceBackup.rollback(pending, filesDir)
                 rollback(entries)
             } catch (rollbackError: Exception) {
                 e.addSuppressed(rollbackError)

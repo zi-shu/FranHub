@@ -4,6 +4,10 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.io.FileInputStream
 import java.util.Properties
 
+// 沙箱里 R8 经 qemu 模拟，单次 9 分钟上下。默认开启缩减与优化（混淆在 proguard-franhub.pro 里关掉）；
+// 只是快速验证 UI 时加 -PfranhubNoMinify 跳过 R8。
+val franhubSkipR8 = providers.gradleProperty("franhubNoMinify").isPresent
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -23,11 +27,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "me.rerere.rikkahub"
+        applicationId = "zishu.wife.Franhub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 194
-        versionName = "3.1.1"
+        versionCode = 2
+        versionName = "v0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -77,8 +81,10 @@ android {
         release {
             signingConfig = signingConfigs.getByName("release")
             optimization {
-                enable = true
+                enable = !franhubSkipR8
             }
+            // 只追加自定义规则；AGP 自身的默认规则仍然生效
+            proguardFiles("proguard-franhub.pro")
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
         }

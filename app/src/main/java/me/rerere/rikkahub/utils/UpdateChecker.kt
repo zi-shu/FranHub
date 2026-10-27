@@ -35,8 +35,12 @@ class UpdateChecker(
         initialValue = UiState.Loading,
     )
 
-    private fun checkUpdate(): Flow<UiState<UpdateInfo>> = flow {
+    // 开发版（FranHub）停用更新检查：不请求官方接口，也不显示更新卡片。
+    // 恢复办法：解开下面注释块，并删掉函数里那行 return@flow。
+    private fun checkUpdate(): Flow<UiState<UpdateInfo>> = flow<UiState<UpdateInfo>> {
         emit(UiState.Loading)
+        return@flow
+        /*
         emit(
             UiState.Success(
                 data = try {
@@ -60,6 +64,7 @@ class UpdateChecker(
                 }
             )
         )
+        */
     }.catch {
         emit(UiState.Error(it))
     }.flowOn(Dispatchers.IO)

@@ -15,6 +15,11 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import me.rerere.rikkahub.data.backup.WorkspaceBackup
+import me.rerere.rikkahub.data.backup.WorkspaceBackupManifest
+import me.rerere.rikkahub.data.backup.WorkspaceEntryInfo
+import me.rerere.rikkahub.data.backup.WorkspaceRestoreSelection
+import me.rerere.rikkahub.data.backup.WorkspaceSelection
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.migration.SettingsJsonMigrator
@@ -84,7 +89,12 @@ class BackupManager(
         }
     }
 
-    suspend fun stageRestore(archive: File, includeDatabase: Boolean, includeFiles: Boolean) =
+    suspend fun stageRestore(
+        archive: File,
+        includeDatabase: Boolean,
+        includeFiles: Boolean,
+        workspaces: WorkspaceRestoreSelection? = null,
+    ) =
         withContext(Dispatchers.IO) {
             restoreMutex.withLock {
                 val restore = pendingRestore(context)
@@ -99,6 +109,10 @@ class BackupManager(
                         for (entry in zip.entries()) {
                             currentCoroutineContext().ensureActive()
                             if (entry.isDirectory) continue
+                            if (entry.name.startsWith("${WorkspaceBackup.WORKSPACES_DIR}/")) {
+                                if (restoreWorkspaceEntry(zip, entry, staging, workspaces)) restoredEntries++
+                                continue
+                            }
                             val target = when (entry.name) {
                                 "settings.json" -> File(staging, "settings.json")
                                 DatabaseBackup.ARCHIVE_DATABASE -> if (includeDatabase) stagedDatabase else null
@@ -120,6 +134,12 @@ class BackupManager(
                             }
                             restoredEntries++
                         }
+                    }
+                    if (workspaces != null && !workspaces.isEmpty) {
+                        WorkspaceBackup.writeOptions(
+                            File(staging, WorkspaceBackup.WORKSPACES_DIR),
+                            workspaces.mode,
+                        )
                     }
                     require(restoredEntries > 0) { "No selected data found in the backup" }
                     require(!stagedWal.exists() || stagedDatabase.exists()) { "Backup WAL has no matching database" }
@@ -151,6 +171,116 @@ class BackupManager(
             }
         }
 
+    /** 只含工作区与 Linux 环境的独立备份包，不含聊天库与设置。 */
+    suspend fun createWorkspaceBackup(workspaces: List<WorkspaceSelection>): File =
+        withContext(Dispatchers.IO) {
+            val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+            val archive = File.createTempFile("workspaces_${timestamp}_", ".zip", context.cacheDir)
+            try {
+                ZipOutputStream(FileOutputStream(archive)).use { zip ->
+                    writeWorkspaces(zip, workspaces)
+                }
+                archive
+            } catch (e: Throwable) {
+                archive.delete()
+                throw e
+            }
+        }
+
+    /** 工作区包恢复：只解工作区 tar，不碰数据库、设置与附件。 */
+    suspend fun stageWorkspaceRestore(archive: File, workspaces: WorkspaceRestoreSelection) =
+        stageRestore(
+            archive = archive,
+            includeDatabase = false,
+            includeFiles = false,
+            workspaces = workspaces,
+        )
+
+    /** 处理 `workspaces/<root>/files.tar` 一类条目，返回 true 表示确实解包了内容。 */
+    private fun restoreWorkspaceEntry(
+        zip: ZipFile,
+        entry: ZipEntry,
+        staging: File,
+        selection: WorkspaceRestoreSelection?,
+    ): Boolean {
+        if (selection == null || selection.isEmpty) return false
+        val path = entry.name.removePrefix("${WorkspaceBackup.WORKSPACES_DIR}/")
+        val root = path.substringBefore('/')
+        if (!WORKSPACE_ROOT_REGEX.matches(root)) return false
+        val kind = when {
+            path.endsWith("/files.tar") -> "files"
+            path.endsWith("/linux.tar") -> "linux"
+            else -> return false
+        }
+        val wanted = if (kind == "files") selection.filesRoots else selection.linuxRoots
+        if (root !in wanted) return false
+        val target = File(File(staging, WorkspaceBackup.WORKSPACES_DIR), "$root/$kind")
+        check(target.isDirectory || target.mkdirs()) { "Cannot create workspace staging directory" }
+        zip.getInputStream(entry).use { input -> WorkspaceBackup.extractTar(input, target) }
+        return true
+    }
+
+    /** 写 `workspaces/<root>/{files,linux}.tar`、清单与包管理器清单。 */
+    private fun writeWorkspaces(zip: ZipOutputStream, workspaces: List<WorkspaceSelection>) {
+        val entries = mutableListOf<WorkspaceEntryInfo>()
+        val inventories = mutableListOf<me.rerere.workspace.PackageInventory>()
+        for (selection in workspaces) {
+            if (!WORKSPACE_ROOT_REGEX.matches(selection.root)) continue
+            val workspaceDir = WorkspaceBackup.workspaceDir(context.filesDir, selection.root)
+            val workspaceFiles = File(workspaceDir, "files")
+            val linuxDir = File(workspaceDir, "linux")
+            var filesCount = 0
+            var filesBytes = 0L
+            var linuxCount = 0
+            var linuxBytes = 0L
+            if (selection.includeFiles && workspaceFiles.isDirectory) {
+                val stats = WorkspaceBackup.scan(workspaceFiles)
+                filesCount = stats.first
+                filesBytes = stats.second
+                zip.putNextEntry(ZipEntry(WorkspaceBackup.filesTarEntry(selection.root)))
+                WorkspaceBackup.writeTar(workspaceFiles, zip)
+                zip.closeEntry()
+            }
+            if (selection.includeLinux && linuxDir.isDirectory) {
+                val stats = WorkspaceBackup.scan(linuxDir)
+                linuxCount = stats.first
+                linuxBytes = stats.second
+                zip.putNextEntry(ZipEntry(WorkspaceBackup.linuxTarEntry(selection.root)))
+                WorkspaceBackup.writeTar(linuxDir, zip)
+                zip.closeEntry()
+                inventories += me.rerere.workspace.PackageInventory.collect(linuxDir)
+            }
+            entries += WorkspaceEntryInfo(
+                root = selection.root,
+                name = selection.name,
+                hasFiles = filesCount > 0,
+                hasLinux = linuxCount > 0,
+                filesCount = filesCount,
+                filesBytes = filesBytes,
+                linuxCount = linuxCount,
+                linuxBytes = linuxBytes,
+            )
+        }
+        val manifest = WorkspaceBackupManifest(
+            createdAt = LocalDateTime.now().toString(),
+            exclusions = WorkspaceBackup.EXCLUDED_LABELS,
+            workspaces = entries,
+        )
+        zip.putNextEntry(ZipEntry(WorkspaceBackup.MANIFEST_ENTRY))
+        zip.write(json.encodeToString(WorkspaceBackupManifest.serializer(), manifest).toByteArray(Charsets.UTF_8))
+        zip.closeEntry()
+
+        val merged = me.rerere.workspace.PackageInventory(
+            apk = inventories.flatMap { it.apk }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+            dpkg = inventories.flatMap { it.dpkg }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+            pip = inventories.flatMap { it.pip }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+            npm = inventories.flatMap { it.npm }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+        )
+        zip.putNextEntry(ZipEntry(WorkspaceBackup.PACKAGES_ENTRY))
+        zip.write(json.encodeToString(me.rerere.workspace.PackageInventory.serializer(), merged).toByteArray(Charsets.UTF_8))
+        zip.closeEntry()
+    }
+
     private fun isAttachment(name: String): Boolean {
         val folder = name.substringBefore('/')
         if (folder !in ATTACHMENT_FOLDERS || '/' !in name) return false
@@ -167,6 +297,8 @@ class BackupManager(
     }
 
     companion object {
+        private val WORKSPACE_ROOT_REGEX = Regex("[A-Za-z0-9._-]+")
+
         private val ATTACHMENT_FOLDERS =
             listOf(FileFolders.UPLOAD, FileFolders.SKILLS, FileFolders.FONTS, FileFolders.MEDIA_CREATION)
 

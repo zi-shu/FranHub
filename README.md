@@ -1,99 +1,99 @@
-<div align="center">
-  <img src="docs/icon.png" alt="App Icon" width="100" />
-  <h1>RikkaHub</h1>
+# FranHub
 
-A native Android LLM chat client that supports switching between different providers for
-conversations 🤖💬
+基于 [RikkaHub](https://github.com/rikkahub/rikkahub) 3.1.1 的二次开发版本。
 
-Click to join our Discord server 👉 [【RikkaHub】](https://discord.gg/9weBqxe5c4)
+- 协议：AGPL-3.0（继承上游，见 `LICENSE`）
+- 基线：RikkaHub 3.1.1，锁定该版本，不跟随上游更新
+- 应用名：FranHub
+- 包名：`zishu.wife.Franhub`
 
-[简体中文](README_ZH_CN.md) | [繁體中文](README_ZH_TW.md) | English
-</div>
+## 与上游的差异
 
-<div align="center">
-  <img src="docs/img/poster.png" alt="RikkaHub" width="800" />
-</div>
+### 备份与恢复
 
-## 🚀 Download
+备份页拆成两栏，两栏各出各的包，互不包含。
 
-🔗 [Download from Website](https://rikka-ai.com/download) (Recommended)
+| 栏位 | 内容 | 产物 |
+|---|---|---|
+| 导出为文件 | 聊天记录、文件 | `rikkahub_backup_<时间>.zip` |
+| 工作区与 Linux 环境 | 工作区、Linux 环境 | `franhub_workspaces_<时间>.zip` |
 
-🔗 [Download from Google Play](https://play.google.com/store/apps/details?id=me.rerere.rikkahub)
+工作区包的内容划分：
 
-> [!WARNING]
-> There are many forked versions of RikkaHub. Issues with forks are unrelated to RikkaHub, so please use forks with caution to avoid privacy leaks or excessive permission requests.
+- 工作区：只含 `/workspace` 里的文件
+- Linux 环境：rootfs 里除 `/workspace` 之外的全部
 
-## 💖 Sponsors
+工作区与环境用 tar 保存，因为 zip 存不住软链接与权限位。恢复时可选全盘替换或增量合并，全盘替换保留一份旧目录用于回滚。恢复在 App 启动、数据库初始化之前完成换入。
 
-| Sponsor | Description |
-|:---:|:---|
-| <img src="docs/sponsors/aihubmix.png" alt="Aihubmix" width="50" /><br /><b>Aihubmix</b> | Thanks to <a href="https://aihubmix.com?aff=pG7r">aihubmix.com</a> for their financial support. We recommend using aihubmix as a one-stop shop for mainstream models worldwide. (OpenAI, Claude, Google Gemini, DeepSeek, Qwen, and hundreds more). |
-| <img src="docs/sponsors/api-mart.png" alt="APIMart" width="50" /><br /><b><a href="https://go.apimart.ai/gh-rikkahub">APIMart</a></b> | Thanks to APIMart for sponsoring this project! APIMart is a low-cost API platform for AI image & video generation — GPT-Image-2 from $0.006/image, 160+ images per dollar. One async API covers both image and video: submit a task, get an ID, fetch results via polling or callback. Batch tens of thousands of images without timeouts, switch models without changing code. Pay-as-you-go with no monthly fee — <a href="https://go.apimart.ai/gh-rikkahub">sign up here</a> to get started. |
-| <img src="docs/sponsors/suixiang.jpg" alt="随想AI中转" width="50" /><br /><b><a href="https://sui-xiang.com">随想AI中转</a></b> | 感谢<a href="https://sui-xiang.com">随想AI中转</a>对本项目的赞助！随想AI中转 是一家可靠高效的 API 中继服务提供商，提供 Claude、Codex、Gemini 等的中继服务。注重隐私的中转站·无数据倒卖·无模型掺水，隐私，透明，极速售后。新账户注册每日签到就送 0.5 元测试额度，充值额度 1:1，无需订阅，按量付费。多线路冗余、跨区域容灾、自动故障切换，长链路 SSE 不中断。99.9% 可用性，关键调用从不掉队。 |
-| <img src="docs/sponsors/ztest.png" alt="真测 ztest.ai" width="50" /><br /><b><a href="https://ztest.ai">真测 ztest.ai</a></b> | 感谢<a href="https://ztest.ai">真测 ztest.ai</a>对本项目的赞助！真测 ztest.ai 是一个 AI 中转站模型检测平台，检测结果数据全公开，23 项探针覆盖协议、身份、能力、内容完整性、安全性、性能六大维度，交叉印证识别伪造与降级。作为独立第三方验证平台，实时监测 AI 中转站的模型真实性、响应质量与服务可用性。 |
-| <img src="docs/sponsors/maru.png" alt="MaruCode" width="50" /><br /><b><a href="https://api.muteki.site/register?aff=Rikkahub&promo=Rikkahub">MaruCode</a></b> | <b><a href="https://api.muteki.site/register?aff=Rikkahub&promo=Rikkahub">MaruCode</a></b> 是一家偶尔做做慈善的小破站 API，自营号池，主要提供 Codex、Claude Code、GPT Image 等主流模型，支持 Websocket 协议，明码标价(Codex 0.25x, CC 1.5x)，透明汇率(1:1)，<a href="https://api.muteki.site/register?aff=Rikkahub&promo=Rikkahub">新用户注册送 2 刀</a>。<a href="https://images-2.muteki.site">生图工作台🖼️</a> |
-| <img src="docs/sponsors/naapi.png" alt="NaAPI 钠API" width="50" /><br /><b><a href="https://naapi.cc/register?aff=rikkahub">NaAPI 钠API</a></b> | Thanks to <a href="https://naapi.cc/register?aff=rikkahub">NaAPI</a> (naapi.cc) for sponsoring this project! NaAPI is an OpenAI-compatible LLM gateway that reliably serves 300+ models from OpenAI, Anthropic, Google and others at discounted pricing. One base URL and one key is all you need: multi-line redundancy with automatic failover keeps long SSE streams alive, and pricing is strictly pay-as-you-go with a 1:1 top-up ratio — no subscription, no hidden markup. |
+导出与恢复都在 ViewModel 作用域执行，切页面或退出设置页不会中断。
 
-## ✨ Features
+### 其他改动
 
-- 🎨 Material 3 Expressive design and 🌙 Dark mode
-- 📦 Workspace: a proot-based Linux agent environment
-- 🎬 Media generation (image and video)
-- 🔄 Multiple AI Provider Support: custom API / URL / models (all OpenAI, Google, Anthropic compatible api)
-- 🖼️ Multimodal input support (Image, Text Documentation, PDF, Docx)
-- 🖥️ Web access for multi-platform use
-- 🛠️ MCP and Skills support
-- 📝 Markdown Rendering (with code highlighting, Latex formulas, tables, Mermaid)
-- 🔍 Search capabilities (Exa, Tavily, Zhipu, LinkUp, Brave, Perplexity, etc.)
-- 🧩 Prompt variables (model name, time, etc.)
-- 🤳 QR code export and import for providers
-- 🤖 Agent customization
-- 🧠 File-based memory
-- 📝 AI Translation
-- 🌐 Custom HTTP request headers and request bodies
-- 💌 Silly Tavern character card import
+- 单条 shell 命令超时上限从 600 秒改为 7200 秒。默认值仍是 30 秒，不传 `timeout` 的命令不受影响。
+- 更新检查停用。不请求官方更新接口，也不显示更新卡片。
+- 应用名从 RikkaHub 改为 FranHub，八个语言目录同步。
 
-## ✨ Development
+## 构建
 
-> [!IMPORTANT]
-> This project does not accept pull requests (PRs).
+需要 JDK 21、Android SDK（compileSdk 37）、NDK 28.2。
 
-This project is developed using [Android Studio](https://developer.android.com/studio).
+仓库里没有 `app/google-services.json`。构建前放一份占位配置即可，`package_name` 必须是 `zishu.wife.Franhub`：
 
-Technology stack documentation:
+```json
+{
+  "project_info": {
+    "project_number": "123456789012",
+    "project_id": "franhub-dev",
+    "storage_bucket": "franhub-dev.appspot.com"
+  },
+  "client": [{
+    "client_info": {
+      "mobilesdk_app_id": "1:123456789012:android:abcdef1234567890abcdef",
+      "android_client_info": { "package_name": "zishu.wife.Franhub" }
+    },
+    "oauth_client": [],
+    "api_key": [{ "current_key": "AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMYDUMMY0000" }],
+    "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+  }],
+  "configuration_version": "1"
+}
+```
 
-- [Kotlin](https://kotlinlang.org/) (Development language)
-- [Koin](https://insert-koin.io/) (Dependency Injection)
-- [Jetpack Compose](https://developer.android.com/jetpack/compose) (UI framework)
-- [DataStore](https://developer.android.com/topic/libraries/architecture/datastore) (Preference data
-  storage)
-- [Room](https://developer.android.com/training/data-storage/room) (Database)
-- [Coil](https://coil-kt.github.io/coil/) (Image loading)
-- [Material 3 Expressive](https://m3.material.io/) (UI design)
-- [Navigation 3](https://developer.android.com/guide/navigation/navigation-3) (Navigation)
-- [Okhttp](https://square.github.io/okhttp/) (HTTP client)
-- [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) (JSON serialization)
+签名信息写在 `local.properties`（该文件不进版本库）：
 
-> [!TIP]
-> You need a `google-services.json` file at `app` folder to build the app.
+```
+storeFile=/path/to/your.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
 
-## 💰 Donate
+构建：
 
-* [Ko-fi](https://ko-fi.com/reovodev)
-* [爱发电](https://afdian.com/a/reovo)
+```bash
+./gradlew :app:assembleGithubRelease
+```
 
-## ⭐ Star History
+R8 规则在 `app/proguard-franhub.pro`：保留缩减，关闭混淆与优化。关闭混淆是为了让安装包里的类名与崩溃栈保持可读。优化档在低性能机器上单次超过十分钟，构建容易被中断，所以暂时关闭。
 
-If you like this project, please give it a star ⭐
+`material3/material-color-utilities` 原本是 Git 子模块，这里改为随仓库保存的源码，克隆后无需 `submodule update` 即可编译。
 
-<a href="https://www.star-history.com/?type=date&repos=re-ovo%2Frikkahub">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=re-ovo/rikkahub&type=date&theme=dark&legend=top-left&sealed_token=qSytWeq7LkzQQViTjK0MYlvvA_qkfuwjOxOqgbRpLUZZwok5rO6LXhpVL7Mq-q3o89BfKpzE7g66BCy18H6eiqTsD8czD0J-HejLqmHy-npcvCTHu11wZw" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=re-ovo/rikkahub&type=date&legend=top-left&sealed_token=qSytWeq7LkzQQViTjK0MYlvvA_qkfuwjOxOqgbRpLUZZwok5rO6LXhpVL7Mq-q3o89BfKpzE7g66BCy18H6eiqTsD8czD0J-HejLqmHy-npcvCTHu11wZw" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=re-ovo/rikkahub&type=date&legend=top-left&sealed_token=qSytWeq7LkzQQViTjK0MYlvvA_qkfuwjOxOqgbRpLUZZwok5rO6LXhpVL7Mq-q3o89BfKpzE7g66BCy18H6eiqTsD8czD0J-HejLqmHy-npcvCTHu11wZw" />
- </picture>
-</a>
+## 目录
 
-## 📄 License
+```
+app/                     主模块
+workspace/               工作区与 rootfs（tar 读写、包清单解析在这里）
+ai/ common/ ui/ ...      上游模块
+docs/franhub/            本项目的设计与变更文档
+CHANGES.md               版本记录
+```
 
-This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+## 已知限制
+
+- 备份包不含 `app/google-services.json` 与 `local.properties`，新环境需自行准备。
+- 增量合并模式失败后不保留回滚快照。
+- 只有中文与英文补了新增文案，其余语言回退英文。
+
+## 版本记录
+
+见 [CHANGES.md](CHANGES.md)。
