@@ -40,5 +40,12 @@
 - 只有中文与英文补了新增文案，其余语言回退英文。
 
 ## 版本记录
+V0.1.0 新增备份和恢复Linux环境和Workspace功能。
+V0.2.0 将shell执行时间从600s强制限制改为7200s(暂时解决措施)
+详见 [CHANGES.md](CHANGES.md)。
 
-见 [CHANGES.md](CHANGES.md)。
+### 说在最后
+- 本项目基本所有工作均由LLM搭配名为RikkaHub的Android Light Agent完成。LLM为Deepseek-v4-flash。
+- 感谢RikkaHub作者@re-ove，感谢995fuviokd-crypto（即使他没有遵循AGPL协议）
+
+Human vision. AI precision
