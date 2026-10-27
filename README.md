@@ -52,7 +52,7 @@
 
 感谢 RikkaHub 的作者 [@re-ovo](https://github.com/re-ovo)。没有这个 Agent，就没有这个项目。
 
-感谢 [@995fuviokd-crypto](https://github.com/995fuviokd-crypto) 的改款带来的思路。该改款只发布二进制、未公开源码，与 AGPL-3.0 的要求不符；本项目没有使用其代码，相关功能按行为重新实现。
+感谢 [@995fuviokd-crypto](https://github.com/995fuviokd-crypto) 的改款带来的思路。该改款只发布二进制，未公开源码；本项目未复制其任何代码，备份与恢复的做法仅作行为参考，实现按官方源码重写。
 
 ---
 
