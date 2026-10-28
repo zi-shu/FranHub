@@ -243,7 +243,7 @@ class BackupManager(
             currentCoroutineContext().ensureActive()
             restore.publish(staging)
         } finally {
-            staging.deleteRecursively()
+            WorkspaceBackup.deleteTree(staging)
         }
     }
 

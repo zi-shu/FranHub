@@ -36,7 +36,7 @@ internal class PendingRestore(
         // Completed restores must never be replayed, even if cleanup was interrupted.
         root.listFiles()?.filter {
             it.name.startsWith("completed-") || it.name.startsWith("preparing-")
-        }?.forEach { it.deleteRecursively() }
+        }?.forEach { WorkspaceBackup.deleteTree(it) }
         if (!pending.isDirectory) return false
 
         val journal = File(pending, "journal.json")
@@ -86,7 +86,9 @@ internal class PendingRestore(
         // If this move fails, startup aborts and the next launch retries the same installation.
         val completed = File(root, "completed-${UUID.randomUUID()}")
         move(pending, completed)
-        completed.deleteRecursively()
+        // 合并模式下 pending 里是整棵 rootfs，带 `/usr/bin/X11 -> .` 这类自引用，
+        // 用不跟随软链接的删除，否则清理要跑几分钟
+        WorkspaceBackup.deleteTree(completed)
         return true
     }
 

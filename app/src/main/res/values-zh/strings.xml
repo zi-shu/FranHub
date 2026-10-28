@@ -1825,4 +1825,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="backup_page_rootfs_downloading_unknown">正在下载 %1$s</string>
   <string name="backup_page_rootfs_extracting">正在解压，已写 %1$d 个条目</string>
   <string name="backup_page_rootfs_installed">安装完成</string>
+  <string name="backup_page_workspace_import_ready">已读取备份包，请选择要恢复的内容</string>
+  <string name="backup_page_backup_failed">备份失败：%1$s</string>
 </resources>

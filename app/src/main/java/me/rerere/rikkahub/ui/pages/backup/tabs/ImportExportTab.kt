@@ -118,20 +118,28 @@ fun ImportExportTab(
         when (val state = job) {
             is BackupTaskState.Failed -> {
                 toaster.show(
-                    context.getString(R.string.backup_page_restore_failed, state.message),
+                    context.getString(
+                        if (state.kind.isExport) R.string.backup_page_backup_failed
+                        else R.string.backup_page_restore_failed,
+                        state.message,
+                    ),
                     type = ToastType.Error,
                 )
                 vm.acknowledgeJob()
             }
 
             is BackupTaskState.Completed -> {
-                toaster.show(
-                    context.getString(
-                        if (state.restartRequired) R.string.backup_page_restore_success
-                        else R.string.backup_page_backup_success
-                    ),
-                    type = ToastType.Success,
-                )
+                // 按作业种类选文案：导入只读了清单，还没恢复，不能说「备份成功」
+                val message = when (state.kind) {
+                    BackupTaskKind.CHAT_EXPORT, BackupTaskKind.WORKSPACE_EXPORT ->
+                        R.string.backup_page_backup_success
+
+                    BackupTaskKind.WORKSPACE_IMPORT ->
+                        R.string.backup_page_workspace_import_ready
+
+                    else -> R.string.backup_page_restore_success
+                }
+                toaster.show(context.getString(message), type = ToastType.Success)
                 if (state.restartRequired) onShowRestartDialog()
                 vm.acknowledgeJob()
             }
@@ -205,7 +213,7 @@ fun ImportExportTab(
                         exportTarget = BackupTarget.CHAT
                         val timestamp = LocalDateTime.now()
                             .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-                        createDocumentLauncher.launch("rikkahub_backup_$timestamp.zip")
+                        createDocumentLauncher.launch("franhub_backup_$timestamp.zip")
                     }
                 } else null,
                 headlineContent = { Text(stringResource(R.string.backup_page_local_backup_export)) },

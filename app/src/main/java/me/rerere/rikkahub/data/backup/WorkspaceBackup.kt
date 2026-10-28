@@ -328,12 +328,12 @@ object WorkspaceBackup {
                 val original = File(rootDir, "$kind-original")
                 when (state) {
                     STATE_BACKED_UP -> if (original.exists()) {
-                        liveDir.deleteRecursively()
+                        deleteTree(liveDir)
                         move(original, liveDir)
                     }
 
                     STATE_DONE -> {
-                        liveDir.deleteRecursively()
+                        deleteTree(liveDir)
                         if (original.exists()) move(original, liveDir)
                     }
                 }
@@ -352,7 +352,7 @@ object WorkspaceBackup {
             writeState(rootDir, kind, STATE_BACKED_UP)
         }
         if (stagedKind.exists()) {
-            liveDir.deleteRecursively()
+            deleteTree(liveDir)
             move(stagedKind, liveDir)
         } else if (!liveDir.exists() && original.exists()) {
             // 上次进程在两次 rename 之间被杀，先放回原目录，让调用方按失败处理
@@ -362,32 +362,81 @@ object WorkspaceBackup {
         writeState(rootDir, kind, STATE_DONE)
     }
 
+    /**
+     * 增量合并：把 [source] 的内容叠到 [target] 上，包内没有的文件保留。
+     *
+     * 递归自己写，不用 `walkTopDown`。后者进入子目录按 `File.isDirectory` 判断，会跟随软链接。
+     * rootfs 里有 `/usr/bin/X11 -> .` 这类自引用，跟随会把同一棵树反复拷，
+     * 并且出现「源与目标是同一个文件」，恢复在启动阶段直接失败。
+     */
     private fun copyTree(source: File, target: File) {
         require(target.isDirectory || target.mkdirs()) { "无法创建工作区目录: ${target.absolutePath}" }
-        val rootPath = target.canonicalFile.toPath()
-        source.walkTopDown().forEach { file ->
-            val relative = file.relativeTo(source).invariantSeparatorsPath
-            if (relative.isEmpty()) return@forEach
-            val destination = File(target, relative)
+        copyTreeInto(source, target, "", target.canonicalFile)
+    }
+
+    private fun copyTreeInto(sourceDir: File, targetDir: File, prefix: String, rootCanonical: File) {
+        val children = sourceDir.listFiles() ?: return
+        for (child in children) {
+            val relative = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            if (isExcluded(relative)) continue
+            val destination = File(targetDir, child.name)
             when {
-                Files.isSymbolicLink(file.toPath()) -> {
+                Files.isSymbolicLink(child.toPath()) -> {
+                    val link = runCatching { Files.readSymbolicLink(child.toPath()) }.getOrElse { continue }
                     destination.parentFile?.mkdirs()
-                    val link = Files.readSymbolicLink(file.toPath())
-                    Files.deleteIfExists(destination.toPath())
+                    deleteEntry(destination)
                     runCatching { Files.createSymbolicLink(destination.toPath(), link) }
                         .onFailure { destination.writeText(link.toString()) }
                 }
 
-                file.isDirectory -> destination.mkdirs()
-                file.isFile -> {
+                child.isDirectory -> {
+                    // 目标位置若是指向别处的软链接，先删链接，避免把内容写进链接目标
+                    if (Files.isSymbolicLink(destination.toPath()) ||
+                        (destination.exists() && !destination.isDirectory)
+                    ) {
+                        deleteEntry(destination)
+                    }
+                    destination.mkdirs()
+                    copyTreeInto(child, destination, relative, rootCanonical)
+                }
+
+                child.isFile -> {
                     destination.parentFile?.mkdirs()
-                    require(destination.canonicalFile.toPath().startsWith(rootPath)) {
+                    require(destination.canonicalFile.startsWith(rootCanonical)) {
                         "工作区条目越界: $relative"
                     }
-                    file.copyTo(destination, overwrite = true)
+                    child.copyTo(destination, overwrite = true)
                 }
             }
         }
+    }
+
+    /** 删掉一个条目本身，软链接只删链接，不进目标。 */
+    private fun deleteEntry(file: File) {
+        if (Files.isSymbolicLink(file.toPath()) || !file.isDirectory) {
+            Files.deleteIfExists(file.toPath())
+        } else {
+            deleteTree(file)
+        }
+    }
+
+    /**
+     * 删除整棵目录树，不跟随软链接。
+     *
+     * `File.deleteRecursively()` 与 `walkTopDown()` 一样按 `File.isDirectory` 判断，
+     * 会把 `X11 -> .` 这样的链接当成目录跟进去，删一次 rootfs 要几分钟。
+     */
+    fun deleteTree(file: File) {
+        val path = file.toPath()
+        if (Files.isSymbolicLink(path)) {
+            Files.deleteIfExists(path)
+            return
+        }
+        if (!file.exists()) return
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { child -> deleteTree(child) }
+        }
+        Files.deleteIfExists(path)
     }
 
     private fun readOptions(staged: File): WorkspaceRestoreOptions {

@@ -1823,4 +1823,6 @@
   <string name="backup_page_rootfs_downloading_unknown">Downloading %1$s</string>
   <string name="backup_page_rootfs_extracting">Extracting, %1$d entries written</string>
   <string name="backup_page_rootfs_installed">Install finished</string>
+  <string name="backup_page_workspace_import_ready">Backup loaded. Choose what to restore.</string>
+  <string name="backup_page_backup_failed">Backup failed: %1$s</string>
 </resources>

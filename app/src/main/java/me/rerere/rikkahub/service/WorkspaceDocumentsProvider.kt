@@ -323,7 +323,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     )
 
     companion object {
-        private const val ROOT_ID = "rikkahub_workspaces"
+        private const val ROOT_ID = "franhub_workspaces"
         private const val ROOT_DOC_ID = "root"
         private const val DOC_PREFIX = "ws/"
 
