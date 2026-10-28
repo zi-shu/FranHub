@@ -8,6 +8,8 @@ import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 class TarWriterTest {
 
@@ -72,5 +74,42 @@ class TarWriterTest {
         val count = archive.toByteArray().inputStream().use { TarArchive.extract(it, target) }
         // 20 个文件 + 1 条软链接，绝不能因为 loop 变成上千条
         assertEquals(21, count)
+    }
+}
+
+class TarGzipTest {
+
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    @Test
+    fun `gzip wrapped archive round trips`() {
+        val source = tmp.newFolder("gz-src")
+        repeat(5) { File(source, "f$it.txt").writeText("内容 $it") }
+        File(source, "dir").mkdirs()
+        File(source, "dir/deep.bin").writeBytes(ByteArray(5000) { (it % 13).toByte() })
+
+        val compressed = ByteArrayOutputStream()
+        GZIPOutputStream(compressed).use { gzip ->
+            val writer = TarArchive.TarWriter(gzip)
+            writer.bytes("workspaces/manifest.json", "{}".toByteArray())
+            writer.directoryTree(source, "workspaces/root/files")
+            writer.finish()
+        }
+
+        val bytes = compressed.toByteArray()
+        assertEquals(0x1f, bytes[0].toInt() and 0xFF)
+        assertEquals(0x8b, bytes[1].toInt() and 0xFF)
+
+        val manifest = GZIPInputStream(bytes.inputStream()).use {
+            TarArchive.readEntry(it, "workspaces/manifest.json")
+        }
+        assertEquals("{}", manifest?.toString(Charsets.UTF_8))
+
+        val target = tmp.newFolder("gz-out")
+        val count = GZIPInputStream(bytes.inputStream()).use { TarArchive.extract(it, target) }
+        assertEquals("内容 3", File(target, "workspaces/root/files/f3.txt").readText())
+        assertEquals(5000L, File(target, "workspaces/root/files/dir/deep.bin").length())
+        assertTrue(count >= 7)
     }
 }
