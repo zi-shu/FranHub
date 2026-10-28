@@ -467,6 +467,10 @@ class BackupManager(
             filesDir = context.filesDir,
         )
 
+        /** 是否有待应用的恢复。Application 启动时用它决定要不要先亮提示。 */
+        fun hasPendingRestore(context: Context): Boolean =
+            File(context.noBackupFilesDir, "backup-restore/pending").isDirectory
+
         /** Must finish before Koin, Room, SettingsStore or any background consumers are initialized. */
         suspend fun applyPendingRestore(context: Context, json: Json): Boolean = withContext(Dispatchers.IO) {
             pendingRestore(context).apply { settingsJson ->

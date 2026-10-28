@@ -10,6 +10,7 @@ import androidx.compose.foundation.ComposeFoundationFlags
 import androidx.compose.runtime.Composer
 import androidx.compose.runtime.tooling.ComposeStackTraceMode
 import androidx.core.app.NotificationChannelCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -60,9 +61,17 @@ const val MEDIA_CREATION_NOTIFICATION_CHANNEL_ID = "media_creation"
 const val MEMORY_DREAM_NOTIFICATION_CHANNEL_ID = "memory_dream"
 const val BACKUP_NOTIFICATION_CHANNEL_ID = "backup_task"
 
+/** 启动时「正在应用恢复」提示的通知 id，与备份前台服务的 2005 分开。 */
+private const val RESTORE_NOTIFICATION_ID = 2006
+
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // 恢复期间主线程会被占住，先建好通知渠道，再亮一条提示
+        this.createNotificationChannel()
+
+        val restoring = BackupManager.hasPendingRestore(this)
+        if (restoring) showRestoreApplying()
         // Restore files and settings before eager Koin singletons or workers can access them.
         try {
             val restored = runBlocking(Dispatchers.IO) {
@@ -80,6 +89,8 @@ class RikkaHubApp : Application() {
                 "备份恢复失败，已保留原数据。请重新导入备份。"
             }
             Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+        } finally {
+            if (restoring) hideRestoreApplying()
         }
         startKoin {
             androidLogger()
@@ -87,7 +98,6 @@ class RikkaHubApp : Application() {
             workManagerFactory()
             modules(appModule, viewModelModule, dataSourceModule, repositoryModule)
         }
-        this.createNotificationChannel()
 
         // set cursor window size to 32MB
         DatabaseUtil.setCursorWindowSize(32 * 1024 * 1024)
@@ -263,6 +273,29 @@ class RikkaHubApp : Application() {
             }.onFailure {
                 Log.e(TAG, "startWebServerIfEnabled failed", it)
             }
+        }
+    }
+
+    /** 恢复在应用主线程上跑，期间界面画不出来，用通知栏和 toast 给个交代。 */
+    private fun showRestoreApplying() {
+        val text = getString(R.string.restore_applying)
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+        val notification = NotificationCompat.Builder(this, BACKUP_NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_rikkahub)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(text)
+            .setOngoing(true)
+            .setSilent(true)
+            .setProgress(0, 0, true)
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(this).notify(RESTORE_NOTIFICATION_ID, notification)
+        }.onFailure { Log.w(TAG, "Failed to post restore notification", it) }
+    }
+
+    private fun hideRestoreApplying() {
+        runCatching {
+            NotificationManagerCompat.from(this).cancel(RESTORE_NOTIFICATION_ID)
         }
     }
 

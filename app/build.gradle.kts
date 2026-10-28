@@ -30,8 +30,8 @@ android {
         applicationId = "zishu.wife.Franhub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "v0.2.8"
+        versionCode = 9
+        versionName = "v0.2.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

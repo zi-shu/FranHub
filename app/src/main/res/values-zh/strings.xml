@@ -1840,4 +1840,5 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_delete_failed_unknown">未知错误</string>
   <string name="workspace_delete_failed_path">出错位置：%1$s</string>
   <string name="workspace_delete_failed_detail">详情：%1$s</string>
+  <string name="restore_applying">正在应用备份恢复，请稍候</string>
 </resources>

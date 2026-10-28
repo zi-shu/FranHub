@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Android 12 起启动画面由系统绘制。显式给底色与图标，避免恢复期间只剩一片黑 -->
+  <style name="Theme.Rikkahub" parent="android:Theme.Material.Light.NoActionBar">
+    <item name="android:windowBackground">#FFFEF7FF</item>
+    <item name="android:windowSplashScreenBackground">#FFF3EDF7</item>
+    <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+  </style>
+</resources>
