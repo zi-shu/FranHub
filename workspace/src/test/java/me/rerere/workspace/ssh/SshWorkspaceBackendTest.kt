@@ -2,6 +2,7 @@ package me.rerere.workspace.ssh
 
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.KeyPair
+import me.rerere.workspace.WorkspaceDeleteFailure
 import me.rerere.workspace.WorkspaceStorageArea
 import org.apache.sshd.server.SshServer
 import org.apache.sshd.server.auth.password.PasswordAuthenticator
@@ -236,12 +237,12 @@ class SshWorkspaceBackendTest {
         assertThrows(IllegalArgumentException::class.java) {
             backend.listFiles(WorkspaceStorageArea.FILES, "../")
         }
-        assertThrows(IllegalArgumentException::class.java) {
-            backend.deleteFile(WorkspaceStorageArea.FILES, "notes", recursive = false)
-        }
-        assertTrue(backend.deleteFile(WorkspaceStorageArea.FILES, "notes", recursive = true))
+        val refused = backend.deleteFile(WorkspaceStorageArea.FILES, "notes", recursive = false)
+        assertFalse(refused.deleted)
+        assertEquals(WorkspaceDeleteFailure.NEED_RECURSIVE, refused.failure)
+        assertTrue(backend.deleteFile(WorkspaceStorageArea.FILES, "notes", recursive = true).deleted)
         assertFalse(File(remoteDir, "notes").exists())
-        assertFalse(backend.deleteFile(WorkspaceStorageArea.FILES, "notes", recursive = true))
+        assertFalse(backend.deleteFile(WorkspaceStorageArea.FILES, "notes", recursive = true).deleted)
     }
 
     @Test
@@ -269,7 +270,7 @@ class SshWorkspaceBackendTest {
         backend.writeText("axb.txt", "x", overwrite = true)
 
         assertEquals("star", backend.readText("a*b.txt"))
-        assertTrue(backend.deleteFile(WorkspaceStorageArea.FILES, "a*b.txt", recursive = false))
+        assertTrue(backend.deleteFile(WorkspaceStorageArea.FILES, "a*b.txt", recursive = false).deleted)
         assertTrue(File(remoteDir, "axb.txt").exists())
     }
 

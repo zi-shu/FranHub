@@ -39,7 +39,7 @@ interface WorkspaceBackend {
 
     fun exportFile(area: WorkspaceStorageArea, path: String, outputStream: OutputStream)
 
-    fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): Boolean
+    fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): WorkspaceDeleteResult
 
     fun absoluteFileSize(path: String): Long
 

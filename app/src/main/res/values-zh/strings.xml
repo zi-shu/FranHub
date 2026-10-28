@@ -1827,4 +1827,17 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="backup_page_rootfs_installed">安装完成</string>
   <string name="backup_page_workspace_import_ready">已读取备份包，请选择要恢复的内容</string>
   <string name="backup_page_backup_failed">备份失败：%1$s</string>
+  <string name="workspace_delete_failed_title">删除失败</string>
+  <string name="workspace_delete_failed_invalid_path">路径非法或越出工作区</string>
+  <string name="workspace_delete_failed_not_found">文件已经不存在</string>
+  <string name="workspace_delete_failed_need_recursive">目录删除参数缺失</string>
+  <string name="workspace_delete_failed_permission">没有写权限，常见原因是父目录只读</string>
+  <string name="workspace_delete_failed_read_only">文件系统只读</string>
+  <string name="workspace_delete_failed_not_empty">目录里还有删不掉的项</string>
+  <string name="workspace_delete_failed_busy">文件正被占用</string>
+  <string name="workspace_delete_failed_name_too_long">路径过长</string>
+  <string name="workspace_delete_failed_io">读写错误</string>
+  <string name="workspace_delete_failed_unknown">未知错误</string>
+  <string name="workspace_delete_failed_path">出错位置：%1$s</string>
+  <string name="workspace_delete_failed_detail">详情：%1$s</string>
 </resources>

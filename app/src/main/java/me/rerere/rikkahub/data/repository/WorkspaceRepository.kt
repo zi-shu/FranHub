@@ -20,6 +20,8 @@ import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstaller
 import me.rerere.workspace.WorkspaceBackend
 import me.rerere.workspace.WorkspaceCommandResult
+import me.rerere.workspace.WorkspaceDeleteFailure
+import me.rerere.workspace.WorkspaceDeleteResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceLayout
 import me.rerere.workspace.WorkspaceManager
@@ -335,8 +337,13 @@ class WorkspaceRepository(
         area: WorkspaceStorageArea,
         path: String,
         recursive: Boolean,
-    ): Boolean = withContext(Dispatchers.IO) {
-        val workspace = dao.getById(id) ?: return@withContext false
+    ): WorkspaceDeleteResult = withContext(Dispatchers.IO) {
+        val workspace = dao.getById(id)
+            ?: return@withContext WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.NOT_FOUND,
+                path,
+                "工作区记录不存在",
+            )
         backendOf(workspace).deleteFile(area, path, recursive)
     }
 

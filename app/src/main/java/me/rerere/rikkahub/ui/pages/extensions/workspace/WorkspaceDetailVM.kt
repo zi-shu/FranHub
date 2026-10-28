@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.pages.extensions.workspace
 
 import android.content.ContentResolver
+import android.util.Log
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
@@ -21,12 +22,15 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
 import me.rerere.workspace.WorkspaceCommandResult
+import me.rerere.workspace.WorkspaceDeleteFailure
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceLayout
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+
+private const val TAG = "WorkspaceDetailVM"
 
 class WorkspaceDetailVM(
     private val id: String,
@@ -199,12 +203,34 @@ class WorkspaceDetailVM(
                     path = entry.path,
                     recursive = entry.isDirectory,
                 )
-            }.onSuccess {
-                refresh()
+            }.onSuccess { result ->
+                if (result.deleted) {
+                    _state.update {
+                        it.copy(deleteFailure = null, deleteFailurePath = null, deleteFailureDetail = null)
+                    }
+                    refresh()
+                } else {
+                    Log.w(
+                        TAG,
+                        "delete rejected: area=${state.value.area} path=${entry.path} " +
+                            "reason=${result.failure} failedAt=${result.failedPath} detail=${result.detail}",
+                    )
+                    _state.update {
+                        it.copy(
+                            deleteFailure = result.failure,
+                            deleteFailurePath = result.failedPath ?: entry.path,
+                            deleteFailureDetail = result.detail,
+                        )
+                    }
+                }
             }.onFailure { error ->
                 _state.update { it.copy(error = error.message ?: "删除失败") }
             }
         }
+    }
+
+    fun dismissDeleteFailure() {
+        _state.update { it.copy(deleteFailure = null, deleteFailurePath = null, deleteFailureDetail = null) }
     }
 
     fun importFile(inputStream: InputStream, fileName: String) {
@@ -383,6 +409,10 @@ data class WorkspaceDetailState(
     val exportCompleted: Int = 0,
     val exportTotal: Int = 0,
     val exportResult: String? = null,
+    /** 删除失败的原因，界面据此显示一句人话。 */
+    val deleteFailure: WorkspaceDeleteFailure? = null,
+    val deleteFailurePath: String? = null,
+    val deleteFailureDetail: String? = null,
 )
 
 data class WorkspaceTerminalState(

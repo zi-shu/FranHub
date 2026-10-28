@@ -1,13 +1,22 @@
 package me.rerere.workspace
 
+import android.util.Log
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
+import java.nio.file.AccessDeniedException
+import java.nio.file.DirectoryNotEmptyException
+import java.nio.file.FileSystemException
 import java.nio.file.FileSystems
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 import kotlin.io.path.name
+
+private const val TAG = "WorkspaceFileSystem"
 
 class WorkspaceFileSystem(
     private val config: WorkspaceConfig = WorkspaceConfig(),
@@ -70,16 +79,119 @@ class WorkspaceFileSystem(
         return candidate
     }
 
-    fun delete(root: File, path: String, recursive: Boolean = false): Boolean {
-        require(path.isNotBlank() && path != ".") { "Refusing to delete workspace root" }
-        val file = resolvePath(root, path)
-        if (!file.exists()) return false
-        return if (file.isDirectory) {
-            require(recursive) { "Directory delete requires recursive = true" }
-            file.deleteRecursively()
-        } else {
-            file.delete()
+    /**
+     * 删除文件或目录。
+     *
+     * 自己递归，不用 `deleteRecursively()`。后者进入子目录按 `isDirectory` 判断，会跟随软链接，
+     * 失败时又只给一个 false，说不出是哪一项、为什么。这里逐项删，失败立刻带出路径与原因。
+     */
+    fun delete(root: File, path: String, recursive: Boolean = false): WorkspaceDeleteResult {
+        if (path.isBlank() || path == ".") {
+            return WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.INVALID_PATH,
+                path,
+                "拒绝删除工作区根目录",
+            )
         }
+        val file = try {
+            resolvePath(root, path)
+        } catch (e: IllegalArgumentException) {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, e.message)
+        }
+        val link = Files.isSymbolicLink(file.toPath())
+        if (!file.exists() && !link) {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.NOT_FOUND, path, "文件已不存在")
+        }
+        if (!link && file.isDirectory && !recursive) {
+            return WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.NEED_RECURSIVE,
+                path,
+                "目录删除需要 recursive = true",
+            )
+        }
+        return deleteEntry(file, path)
+    }
+
+    /** 先删子项再删自己。软链接只删链接本身，不进入目标。 */
+    private fun deleteEntry(file: File, relative: String): WorkspaceDeleteResult {
+        if (Files.isSymbolicLink(file.toPath()) || !file.isDirectory) {
+            return runDelete(file, relative)
+        }
+        file.listFiles()?.forEach { child ->
+            val result = deleteEntry(child, "$relative/${child.name}")
+            if (!result.deleted) return result
+        }
+        return runDelete(file, relative)
+    }
+
+    private fun runDelete(file: File, relative: String): WorkspaceDeleteResult {
+        return try {
+            Files.delete(file.toPath())
+            WorkspaceDeleteResult.success()
+        } catch (e: NoSuchFileException) {
+            WorkspaceDeleteResult.success()
+        } catch (e: DirectoryNotEmptyException) {
+            reportFailure(WorkspaceDeleteFailure.NOT_EMPTY, file, relative, e)
+        } catch (e: AccessDeniedException) {
+            reportFailure(WorkspaceDeleteFailure.PERMISSION_DENIED, file, relative, e)
+        } catch (e: FileSystemException) {
+            reportFailure(classify(e), file, relative, e)
+        } catch (e: IOException) {
+            reportFailure(classify(e), file, relative, e)
+        }
+    }
+
+    /** 失败时把现场写进日志：目标状态、父目录权限、错误类型。 */
+    private fun reportFailure(
+        reason: WorkspaceDeleteFailure,
+        file: File,
+        relative: String,
+        error: IOException,
+    ): WorkspaceDeleteResult {
+        val parent = file.parentFile
+        Log.w(
+            TAG,
+            "delete failed path=$relative reason=$reason exists=${file.exists()} " +
+                "isDir=${file.isDirectory} canWrite=${file.canWrite()} " +
+                "perms=${permissionsOf(file)} parent=${parent?.absolutePath} " +
+                "parentCanWrite=${parent?.canWrite()} parentPerms=${permissionsOf(parent)} " +
+                "error=${error.javaClass.simpleName}: ${error.message}",
+        )
+        return WorkspaceDeleteResult.failure(reason, relative, error.message)
+    }
+
+    private fun classify(error: IOException): WorkspaceDeleteFailure {
+        val text = buildString {
+            append(error.message.orEmpty())
+            if (error is FileSystemException) append(' ').append(error.reason.orEmpty())
+        }
+        return when {
+            text.contains("Read-only", ignoreCase = true) -> WorkspaceDeleteFailure.READ_ONLY
+            text.contains("No space", ignoreCase = true) -> WorkspaceDeleteFailure.IO
+            text.contains("busy", ignoreCase = true) -> WorkspaceDeleteFailure.BUSY
+            text.contains("File name too long", ignoreCase = true) -> WorkspaceDeleteFailure.NAME_TOO_LONG
+            text.contains("Permission denied", ignoreCase = true) -> WorkspaceDeleteFailure.PERMISSION_DENIED
+            text.contains("Directory not empty", ignoreCase = true) -> WorkspaceDeleteFailure.NOT_EMPTY
+            else -> WorkspaceDeleteFailure.IO
+        }
+    }
+
+    private fun permissionsOf(file: File?): String {
+        if (file == null) return "-"
+        return runCatching {
+            val perms = Files.getPosixFilePermissions(file.toPath())
+            buildString {
+                append(if (perms.contains(PosixFilePermission.OWNER_READ)) 'r' else '-')
+                append(if (perms.contains(PosixFilePermission.OWNER_WRITE)) 'w' else '-')
+                append(if (perms.contains(PosixFilePermission.OWNER_EXECUTE)) 'x' else '-')
+                append(if (perms.contains(PosixFilePermission.GROUP_READ)) 'r' else '-')
+                append(if (perms.contains(PosixFilePermission.GROUP_WRITE)) 'w' else '-')
+                append(if (perms.contains(PosixFilePermission.GROUP_EXECUTE)) 'x' else '-')
+                append(if (perms.contains(PosixFilePermission.OTHERS_READ)) 'r' else '-')
+                append(if (perms.contains(PosixFilePermission.OTHERS_WRITE)) 'w' else '-')
+                append(if (perms.contains(PosixFilePermission.OTHERS_EXECUTE)) 'x' else '-')
+            }
+        }.getOrDefault("-")
     }
 
     fun move(root: File, source: String, target: String, overwrite: Boolean = false): WorkspaceFileEntry {

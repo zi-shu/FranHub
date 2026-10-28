@@ -182,7 +182,7 @@ class WorkspaceManager(
         path: String,
         recursive: Boolean = false,
         area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
-    ): Boolean =
+    ): WorkspaceDeleteResult =
         fileSystem.delete(areaDir(root, area), path, recursive)
 
     fun moveFile(root: String, source: String, target: String, overwrite: Boolean = false): WorkspaceFileEntry =

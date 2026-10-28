@@ -1825,4 +1825,17 @@
   <string name="backup_page_rootfs_installed">Install finished</string>
   <string name="backup_page_workspace_import_ready">Backup loaded. Choose what to restore.</string>
   <string name="backup_page_backup_failed">Backup failed: %1$s</string>
+  <string name="workspace_delete_failed_title">Delete failed</string>
+  <string name="workspace_delete_failed_invalid_path">Invalid path or outside the workspace</string>
+  <string name="workspace_delete_failed_not_found">The file no longer exists</string>
+  <string name="workspace_delete_failed_need_recursive">Missing recursive flag for a directory</string>
+  <string name="workspace_delete_failed_permission">No write permission, usually the parent directory is read-only</string>
+  <string name="workspace_delete_failed_read_only">File system is read-only</string>
+  <string name="workspace_delete_failed_not_empty">Directory still has items that cannot be deleted</string>
+  <string name="workspace_delete_failed_busy">File is in use</string>
+  <string name="workspace_delete_failed_name_too_long">Path is too long</string>
+  <string name="workspace_delete_failed_io">Read or write error</string>
+  <string name="workspace_delete_failed_unknown">Unknown error</string>
+  <string name="workspace_delete_failed_path">Failed at: %1$s</string>
+  <string name="workspace_delete_failed_detail">Detail: %1$s</string>
 </resources>

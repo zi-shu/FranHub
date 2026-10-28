@@ -6,6 +6,8 @@ import com.jcraft.jsch.SftpException
 import me.rerere.workspace.WorkspaceBackend
 import me.rerere.workspace.WorkspaceCommandResult
 import me.rerere.workspace.WorkspaceConfig
+import me.rerere.workspace.WorkspaceDeleteFailure
+import me.rerere.workspace.WorkspaceDeleteResult
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceLayout
 import me.rerere.workspace.WorkspaceStorageArea
@@ -103,25 +105,45 @@ class SshWorkspaceBackend(
         withSftp(area, retry = false) { sftp -> sftp.export(file, path, outputStream) }
     }
 
-    override fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): Boolean {
-        require(path.isNotBlank() && path != ".") { "Refusing to delete workspace root" }
-        val target = resolve(area, path)
-        require(target != areaRoot(area)) { "Refusing to delete workspace root" }
-        return withSftp(area, retry = false) { sftp ->
-            // 用 lstat: 删除指向目录的软链时只删链接本身
-            val attrs = try {
-                sftp.lstat(target.sftpQuote())
-            } catch (e: SftpException) {
-                if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) return@withSftp false
-                throw e.wrap(path)
+    override fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): WorkspaceDeleteResult {
+        if (path.isBlank() || path == ".") {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, "拒绝删除工作区根目录")
+        }
+        val target = try {
+            resolve(area, path)
+        } catch (e: Exception) {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, e.message)
+        }
+        if (target == areaRoot(area)) {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, "拒绝删除工作区根目录")
+        }
+        return try {
+            withSftp(area, retry = false) { sftp ->
+                // 用 lstat: 删除指向目录的软链时只删链接本身
+                val attrs = try {
+                    sftp.lstat(target.sftpQuote())
+                } catch (e: SftpException) {
+                    if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+                        return@withSftp WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.NOT_FOUND, path, "文件已不存在")
+                    }
+                    throw e.wrap(path)
+                }
+                if (attrs.isDir && !attrs.isLink) {
+                    if (!recursive) {
+                        return@withSftp WorkspaceDeleteResult.failure(
+                            WorkspaceDeleteFailure.NEED_RECURSIVE,
+                            path,
+                            "目录删除需要 recursive = true",
+                        )
+                    }
+                    sftp.deleteRecursively(target)
+                } else {
+                    sftp.rm(target.sftpQuote())
+                }
+                WorkspaceDeleteResult.success()
             }
-            if (attrs.isDir && !attrs.isLink) {
-                require(recursive) { "Directory delete requires recursive = true" }
-                sftp.deleteRecursively(target)
-            } else {
-                sftp.rm(target.sftpQuote())
-            }
-            true
+        } catch (e: Exception) {
+            WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.IO, path, e.message)
         }
     }
 

@@ -131,6 +131,7 @@ import me.rerere.rikkahub.utils.writeClipboardText
 import me.rerere.ui.components.RikkaConfirmDialog
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
+import me.rerere.workspace.WorkspaceDeleteFailure
 import me.rerere.workspace.WorkspaceFileEntry
 import me.rerere.workspace.WorkspaceShellStatus
 import me.rerere.workspace.WorkspaceStorageArea
@@ -406,6 +407,48 @@ fun WorkspaceDetailPage(id: String) {
             Text(stringResource(R.string.workspace_detail_will_delete, entry.path))
         }
     }
+
+    state.deleteFailure?.let { failure ->
+        AlertDialog(
+            onDismissRequest = vm::dismissDeleteFailure,
+            title = { Text(stringResource(R.string.workspace_delete_failed_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(deleteFailureText(failure))
+                    state.deleteFailurePath?.takeIf { it.isNotBlank() }?.let { path ->
+                        Text(stringResource(R.string.workspace_delete_failed_path, path))
+                    }
+                    state.deleteFailureDetail?.takeIf { it.isNotBlank() }?.let { detail ->
+                        Text(
+                            text = stringResource(R.string.workspace_delete_failed_detail, detail),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = vm::dismissDeleteFailure) {
+                    Text(stringResource(R.string.common_confirm))
+                }
+            },
+        )
+    }
+}
+
+/** 删除失败原因转成一句人话。 */
+@Composable
+private fun deleteFailureText(failure: WorkspaceDeleteFailure): String = when (failure) {
+    WorkspaceDeleteFailure.INVALID_PATH -> stringResource(R.string.workspace_delete_failed_invalid_path)
+    WorkspaceDeleteFailure.NOT_FOUND -> stringResource(R.string.workspace_delete_failed_not_found)
+    WorkspaceDeleteFailure.NEED_RECURSIVE -> stringResource(R.string.workspace_delete_failed_need_recursive)
+    WorkspaceDeleteFailure.PERMISSION_DENIED -> stringResource(R.string.workspace_delete_failed_permission)
+    WorkspaceDeleteFailure.READ_ONLY -> stringResource(R.string.workspace_delete_failed_read_only)
+    WorkspaceDeleteFailure.NOT_EMPTY -> stringResource(R.string.workspace_delete_failed_not_empty)
+    WorkspaceDeleteFailure.BUSY -> stringResource(R.string.workspace_delete_failed_busy)
+    WorkspaceDeleteFailure.NAME_TOO_LONG -> stringResource(R.string.workspace_delete_failed_name_too_long)
+    WorkspaceDeleteFailure.IO -> stringResource(R.string.workspace_delete_failed_io)
+    WorkspaceDeleteFailure.UNKNOWN -> stringResource(R.string.workspace_delete_failed_unknown)
 }
 
 @Composable
