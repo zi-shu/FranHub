@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,7 +45,9 @@ import me.rerere.rikkahub.data.datastore.WebDavConfig
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalToaster
-import me.rerere.rikkahub.ui.pages.backup.BackupJob
+import me.rerere.rikkahub.data.backup.BackupPhase
+import me.rerere.rikkahub.data.backup.BackupTaskKind
+import me.rerere.rikkahub.data.backup.BackupTaskState
 import me.rerere.rikkahub.ui.pages.backup.BackupTarget
 import me.rerere.rikkahub.ui.pages.backup.BackupVM
 import me.rerere.rikkahub.ui.pages.backup.components.BackupActionIcon
@@ -64,10 +67,14 @@ fun ImportExportTab(
     val selectedRoots by vm.selectedWorkspaceRoots.collectAsStateWithLifecycle()
     val workspaces by vm.workspaces.collectAsStateWithLifecycle()
     val job by vm.backupJob.collectAsStateWithLifecycle()
-    val isChatExporting by vm.isChatExporting.collectAsStateWithLifecycle()
-    val isChatImporting by vm.isChatImporting.collectAsStateWithLifecycle()
-    val isWorkspaceExporting by vm.isWorkspaceExporting.collectAsStateWithLifecycle()
-    val isWorkspaceImporting by vm.isWorkspaceImporting.collectAsStateWithLifecycle()
+    val running = job as? BackupTaskState.Running
+    val isChatExporting = running?.kind == BackupTaskKind.CHAT_EXPORT
+    val isChatImporting = running?.kind == BackupTaskKind.CHAT_IMPORT ||
+        running?.kind == BackupTaskKind.CHATBOX_IMPORT ||
+        running?.kind == BackupTaskKind.CHERRY_IMPORT
+    val isWorkspaceExporting = running?.kind == BackupTaskKind.WORKSPACE_EXPORT
+    val isWorkspaceImporting = running?.kind == BackupTaskKind.WORKSPACE_IMPORT ||
+        running?.kind == BackupTaskKind.WORKSPACE_RESTORE
     val pendingRestore by vm.pendingWorkspaceRestore.collectAsStateWithLifecycle()
     val sizes by vm.workspaceSizesState.collectAsStateWithLifecycle()
     val sizesReady by vm.workspaceSizesReady.collectAsStateWithLifecycle()
@@ -75,11 +82,13 @@ fun ImportExportTab(
     var showWorkspacePicker by remember { mutableStateOf(false) }
     var showExportConfirm by remember { mutableStateOf(false) }
     var exportTarget by remember { mutableStateOf(BackupTarget.CHAT) }
+    // 工作区包是否 gzip 压缩：压缩省空间，但 CPU 长时间满载
+    var compressWorkspace by remember { mutableStateOf(false) }
 
     // 导入类型：local 为聊天记录包，workspace 为工作区包，chatbox 与 cherry 为外部导入
     var importType by remember { mutableStateOf("local") }
 
-    val isRunning = job is BackupJob.Running
+    val isRunning = job is BackupTaskState.Running
     val localWorkspaces = workspaces.filter { !it.isSsh() }
     val effectiveRoots = if (selectedRoots.isEmpty()) {
         localWorkspaces.map { it.root }.toSet()
@@ -99,7 +108,7 @@ fun ImportExportTab(
     // 作业结果统一在这里提示，页面离开后回来仍能看到
     LaunchedEffect(job) {
         when (val state = job) {
-            is BackupJob.Failed -> {
+            is BackupTaskState.Failed -> {
                 toaster.show(
                     context.getString(R.string.backup_page_restore_failed, state.message),
                     type = ToastType.Error,
@@ -107,7 +116,7 @@ fun ImportExportTab(
                 vm.acknowledgeJob()
             }
 
-            is BackupJob.Completed -> {
+            is BackupTaskState.Completed -> {
                 toaster.show(
                     context.getString(
                         if (state.restartRequired) R.string.backup_page_restore_success
@@ -127,6 +136,25 @@ fun ImportExportTab(
         contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
         uri?.let { vm.startExport(exportTarget, it) }
+    }
+
+    val createTarLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/x-tar")
+    ) { uri ->
+        uri?.let { vm.startExport(exportTarget, it, compressWorkspace) }
+    }
+
+    val createTarGzLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/gzip")
+    ) { uri ->
+        uri?.let { vm.startExport(exportTarget, it, compressWorkspace) }
+    }
+
+    // 工作区包可能是 .tar、.tar.gz 或旧版 .zip，导入时不按扩展名过滤
+    val openWorkspaceLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { vm.startWorkspaceImport(it) }
     }
 
     val openDocumentLauncher = rememberLauncherForActivityResult(
@@ -176,7 +204,7 @@ fun ImportExportTab(
                 supportingContent = {
                     Text(
                         if (isChatExporting) {
-                            stringResource(R.string.backup_page_exporting)
+                            exportProgressText(running)
                         } else {
                             stringResource(R.string.backup_page_export_desc)
                         }
@@ -237,6 +265,12 @@ fun ImportExportTab(
                 leadingContent = { Checkbox(checked = wantsLinux, onCheckedChange = null) },
             )
             item(
+                onClick = { compressWorkspace = !compressWorkspace },
+                headlineContent = { Text(stringResource(R.string.backup_page_compress)) },
+                supportingContent = { Text(stringResource(R.string.backup_page_compress_desc)) },
+                leadingContent = { Switch(checked = compressWorkspace, onCheckedChange = null) },
+            )
+            item(
                 onClick = {
                     vm.refreshWorkspaceSizes()
                     showWorkspacePicker = true
@@ -268,7 +302,7 @@ fun ImportExportTab(
                 supportingContent = {
                     Text(
                         if (isWorkspaceExporting) {
-                            stringResource(R.string.backup_page_exporting)
+                            exportProgressText(running)
                         } else {
                             stringResource(R.string.backup_page_workspace_export_desc)
                         }
@@ -285,7 +319,7 @@ fun ImportExportTab(
                 onClick = if (!isRunning) {
                     {
                         importType = "workspace"
-                        openDocumentLauncher.launch(arrayOf("application/zip"))
+                        openWorkspaceLauncher.launch(arrayOf("*/*"))
                     }
                 } else null,
                 headlineContent = { Text(stringResource(R.string.backup_page_workspace_import)) },
@@ -403,7 +437,11 @@ fun ImportExportTab(
                         exportTarget = BackupTarget.WORKSPACE
                         val timestamp = LocalDateTime.now()
                             .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-                        createDocumentLauncher.launch("franhub_workspaces_$timestamp.zip")
+                        if (compressWorkspace) {
+                            createTarGzLauncher.launch("franhub_workspaces_$timestamp.tar.gz")
+                        } else {
+                            createTarLauncher.launch("franhub_workspaces_$timestamp.tar")
+                        }
                     }
                 ) {
                     Text(stringResource(R.string.confirm))
@@ -585,5 +623,26 @@ private fun RestoreModeRow(label: String, selected: Boolean, onSelect: () -> Uni
     ) {
         RadioButton(selected = selected, onClick = onSelect)
         Text(label, modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+/** 导出进度文案：统计阶段显示不定进度，写入阶段显示百分比与字节数。 */
+@Composable
+private fun exportProgressText(state: BackupTaskState.Running?): String {
+    if (state == null) return stringResource(R.string.backup_page_exporting)
+    val progress = state.progress
+    return when (progress.phase) {
+        BackupPhase.SCANNING -> stringResource(R.string.backup_notification_scanning)
+        BackupPhase.WRITING, BackupPhase.FINISHING -> {
+            val done = progress.doneBytes.fileSizeToString()
+            if (progress.totalBytes > 0) {
+                val percent = (progress.fraction * 100).toInt()
+                "$done / ${progress.totalBytes.fileSizeToString()} · $percent%"
+            } else {
+                done
+            }
+        }
+
+        BackupPhase.PREPARING -> stringResource(R.string.backup_page_exporting)
     }
 }

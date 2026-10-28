@@ -2,10 +2,15 @@ package me.rerere.rikkahub.data.backup
 
 import me.rerere.workspace.PackageInventory
 import me.rerere.workspace.TarArchive
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.zip.Deflater
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlinx.serialization.Serializable
@@ -89,9 +94,13 @@ data class WorkspaceRestoreSelection(
  */
 object WorkspaceBackup {
     const val MANIFEST_ENTRY = "workspaces/manifest.json"
-    const val PACKAGES_ENTRY = "packages.json"
+    const val PACKAGES_ENTRY = "workspaces/packages.json"
     const val MODE_FILE = "mode.json"
     const val WORKSPACES_DIR = "workspaces"
+
+    /** 备份包扩展名。压缩包走 gzip 包裹的同一种 tar 流。 */
+    const val EXTENSION_TAR = ".tar"
+    const val EXTENSION_TAR_GZ = ".tar.gz"
 
     val EXCLUDED_LABELS = listOf(
         "tmp", "proc", "sys", "dev", "var/cache", "var/log", "__pycache__", "_cacache", ".cache/pip",
@@ -126,24 +135,124 @@ object WorkspaceBackup {
         return EXCLUDED_PREFIXES.any { relativePath.startsWith(it) }
     }
 
-    /** 统计目录内参与备份的文件数与字节数。 */
+    /**
+     * 统计目录内参与备份的文件数与字节数。
+     *
+     * 与 [writeTar] 用同一套排除规则，数字才对得上。软链接只计一个条目、不跟进去：
+     * 跟进去会把 `/bin -> usr/bin` 这类软链接后面的整棵子树算两遍，遇到指向祖先的链接
+     * 还会一直转下去，统计永远结束不了。
+     */
     fun scan(directory: File): Pair<Int, Long> {
         if (!directory.isDirectory) return 0 to 0L
+        return scanInto(directory, "")
+    }
+
+    private fun scanInto(directory: File, prefix: String): Pair<Int, Long> {
+        val children = directory.listFiles() ?: return 0 to 0L
         var count = 0
         var bytes = 0L
-        directory.walkTopDown()
-            .onEnter { it.name !in EXCLUDED_SEGMENTS }
-            .forEach { file ->
-                if (file.isFile || Files.isSymbolicLink(file.toPath())) {
+        for (child in children) {
+            val path = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            if (isExcluded(path)) continue
+            when {
+                Files.isSymbolicLink(child.toPath()) -> count++
+                child.isDirectory -> {
+                    val (childCount, childBytes) = scanInto(child, path)
+                    count += childCount
+                    bytes += childBytes
+                }
+
+                child.isFile -> {
                     count++
-                    if (file.isFile) bytes += file.length()
+                    bytes += child.length()
                 }
             }
+        }
         return count to bytes
     }
 
-    fun writeTar(directory: File, output: OutputStream, onEntry: (String) -> Unit = {}) {
-        TarArchive.write(
+    /**
+     * 只统计写入字节数、用于进度上报的包装流。
+     *
+     * [close] 只冲刷不关闭底层流，底层是 zip 的条目流，关掉会把整个压缩包带下来。
+     */
+    class CountingOutputStream(
+        private val delegate: OutputStream,
+        private val onBytes: (Long) -> Unit = {},
+    ) : OutputStream() {
+        var total: Long = 0L
+            private set
+
+        override fun write(b: Int) {
+            delegate.write(b)
+            total += 1
+            onBytes(total)
+        }
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            delegate.write(b, off, len)
+            total += len.toLong()
+            onBytes(total)
+        }
+
+        override fun flush() {
+            delegate.flush()
+        }
+
+        override fun close() {
+            flush()
+        }
+    }
+
+    /**
+     * 判断备份包是不是 tar 容器。按文件头判断，不看扩展名：
+     * gzip 头 `1f 8b`，或偏移 257 处的 `ustar`。
+     */
+    fun isTarArchive(file: File): Boolean {
+        val head = ByteArray(512)
+        val read = runCatching { file.inputStream().use { it.read(head) } }.getOrDefault(0)
+        if (read >= 2 && head[0] == 0x1f.toByte() && head[1] == 0x8b.toByte()) return true
+        if (read < 512) return false
+        return String(head, 257, 5, Charsets.US_ASCII) == "ustar"
+    }
+
+    /** 打开归档输入流，gzip 自动解开。调用方负责关闭。 */
+    fun openArchive(file: File): InputStream {
+        val raw = BufferedInputStream(file.inputStream(), 1 shl 20)
+        raw.mark(2)
+        val first = raw.read()
+        val second = raw.read()
+        raw.reset()
+        return if (first == 0x1f && second == 0x8b) GZIPInputStream(raw, 1 shl 20) else raw
+    }
+
+    /** 归档输出流。压缩时用最快压缩档，避免长时间占满 CPU。 */
+    fun openArchiveOutput(output: OutputStream, compress: Boolean): OutputStream {
+        val buffered = BufferedOutputStream(output, 1 shl 20)
+        return if (compress) FastGzipOutputStream(buffered) else buffered
+    }
+
+    /** 写 gzip 尾部并冲刷，不关闭调用方的流。 */
+    fun finishArchive(stream: OutputStream) {
+        (stream as? GZIPOutputStream)?.finish()
+        stream.flush()
+    }
+
+    /** 从归档里读清单。清单排在包首，读到即可返回。 */
+    fun readManifestFromArchive(file: File): WorkspaceBackupManifest? = runCatching {
+        openArchive(file).use { input ->
+            val data = TarArchive.readEntry(input, MANIFEST_ENTRY) ?: return@use null
+            readManifest(data.toString(Charsets.UTF_8))
+        }
+    }.getOrNull()
+
+    private class FastGzipOutputStream(output: OutputStream) : GZIPOutputStream(output, 1 shl 16) {
+        init {
+            def.setLevel(Deflater.BEST_SPEED)
+        }
+    }
+
+    fun writeTar(directory: File, output: OutputStream, onEntry: (String) -> Unit = {}) {        TarArchive.write(
             sourceDir = directory,
             output = output,
             filter = { path -> !isExcluded(path) },

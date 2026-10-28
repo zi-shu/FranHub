@@ -38,45 +38,131 @@ object TarArchive {
         onEntry: (relativePath: String, file: File) -> Unit = { _, _ -> },
     ) {
         require(sourceDir.isDirectory) { "Not a directory: ${sourceDir.absolutePath}" }
-        writeDirectory(sourceDir, "", output, filter, onEntry)
-        output.write(ByteArray(BLOCK * 2))
-        output.flush()
+        val writer = TarWriter(output)
+        writer.directoryTree(sourceDir, "", filter, onEntry)
+        writer.finish()
     }
 
-    private fun writeDirectory(
-        directory: File,
-        relativePath: String,
-        output: OutputStream,
-        filter: (String) -> Boolean,
-        onEntry: (String, File) -> Unit,
-    ) {
-        val children = directory.listFiles()?.sortedBy { it.name } ?: return
-        for (child in children) {
-            val path = if (relativePath.isEmpty()) child.name else "$relativePath/${child.name}"
-            if (!filter(path)) continue
-            when {
-                Files.isSymbolicLink(child.toPath()) -> {
-                    val target = runCatching { Files.readSymbolicLink(child.toPath()).toString() }
-                        .getOrElse { continue }
-                    writeSymlink(path, target, child.lastModified(), output)
-                    onEntry(path, child)
-                }
+    /**
+     * 流式归档写入器，一次写一个容器。
+     *
+     * 调用方先写清单，再逐个目录追加，最后 [finish] 写归档结尾。容器可以是单个 tar，
+     * 也可以是 gzip 压缩后的 tar，两条路径共用这一套写入代码。
+     */
+    class TarWriter(private val output: OutputStream) {
 
-                child.isDirectory -> {
-                    writeHeader(path.ensureTrailingSlash(), TYPE_DIRECTORY, 0, 493, child.lastModified(), "", output)
-                    onEntry(path, child)
-                    writeDirectory(child, path, output, filter, onEntry)
-                }
+        /** 写入一个普通文件条目。清单、包列表这类小文件用它。 */
+        fun bytes(name: String, data: ByteArray, mode: Int = 420, mtime: Long = System.currentTimeMillis()) {
+            writeHeader(name, TYPE_FILE, data.size.toLong(), mode, mtime, "", output)
+            output.write(data)
+            writePadding(data.size.toLong(), output)
+        }
 
-                child.isFile -> {
-                    val size = child.length()
-                    val mode = if (child.canExecute()) 493 else 420
-                    writeHeader(path, TYPE_FILE, size, mode, child.lastModified(), "", output)
-                    copyExactly(child, size, output)
-                    onEntry(path, child)
+        /**
+         * 把一个目录树按 [prefix] 前缀追加进容器。
+         *
+         * [filter] 收到相对 [sourceDir] 的路径，与备份统计用同一套排除规则。
+         * 软链接只写链接本身，不进入目标，避免 `/usr/bin/X11 -> .` 这类自引用把归档撑爆。
+         */
+        fun directoryTree(
+            sourceDir: File,
+            prefix: String,
+            filter: (relativePath: String) -> Boolean = { true },
+            onEntry: (relativePath: String, file: File) -> Unit = { _, _ -> },
+        ) {
+            require(sourceDir.isDirectory) { "Not a directory: ${sourceDir.absolutePath}" }
+            writeTree(sourceDir, prefix, "", filter, onEntry)
+        }
+
+        private fun writeTree(
+            directory: File,
+            prefix: String,
+            relativePath: String,
+            filter: (String) -> Boolean,
+            onEntry: (String, File) -> Unit,
+        ) {
+            val children = directory.listFiles()?.sortedBy { it.name } ?: return
+            for (child in children) {
+                val relative = if (relativePath.isEmpty()) child.name else "$relativePath/${child.name}"
+                if (!filter(relative)) continue
+                val path = if (prefix.isEmpty()) relative else "$prefix/$relative"
+                when {
+                    Files.isSymbolicLink(child.toPath()) -> {
+                        val target = runCatching { Files.readSymbolicLink(child.toPath()).toString() }
+                            .getOrElse { continue }
+                        writeSymlink(path, target, child.lastModified(), output)
+                        onEntry(relative, child)
+                    }
+
+                    child.isDirectory -> {
+                        writeHeader(path.ensureTrailingSlash(), TYPE_DIRECTORY, 0, 493, child.lastModified(), "", output)
+                        onEntry(relative, child)
+                        writeTree(child, prefix, relative, filter, onEntry)
+                    }
+
+                    child.isFile -> {
+                        val size = child.length()
+                        val mode = if (child.canExecute()) 493 else 420
+                        writeHeader(path, TYPE_FILE, size, mode, child.lastModified(), "", output)
+                        copyExactly(child, size, output)
+                        onEntry(relative, child)
+                    }
+                    // 设备节点、FIFO、socket 与 Android 上无法表示的条目一律跳过
                 }
-                // 设备节点、FIFO、socket 与 Android 上无法表示的条目一律跳过
             }
+        }
+
+        /** 写归档结尾的两个全零块。写完自动 flush，不关闭底层流。 */
+        fun finish() {
+            output.write(ByteArray(BLOCK * 2))
+            output.flush()
+        }
+    }
+
+    /**
+     * 顺序扫描归档，返回第一个名为 [target] 的普通条目的内容，没有就返回 null。
+     *
+     * 清单放在归档开头，找到即可停止，不必读完整个包。
+     */
+    fun readEntry(input: InputStream, target: String): ByteArray? {
+        val header = ByteArray(BLOCK)
+        var longName: String? = null
+        var longLink: String? = null
+        var pax: Map<String, String>? = null
+        while (true) {
+            if (!input.readFullyOrEnd(header)) return null
+            if (header.all { it == 0.toByte() }) return null
+            val rawName = header.readString(0, 100)
+            val prefix = header.readString(345, 155)
+            val type = header[156].toInt().toChar()
+            val size = header.readOctal(124, 12)
+            val rawLink = header.readString(157, 100)
+            when (type) {
+                TYPE_LONG_NAME -> {
+                    longName = readEntryData(input, size).toString(Charsets.UTF_8).trimEnd('\u0000')
+                    continue
+                }
+
+                TYPE_LONG_LINK -> {
+                    longLink = readEntryData(input, size).toString(Charsets.UTF_8).trimEnd('\u0000')
+                    continue
+                }
+
+                TYPE_PAX -> {
+                    pax = parsePax(readEntryData(input, size).toString(Charsets.UTF_8))
+                    continue
+                }
+            }
+            val name = pax?.get("path") ?: longName
+                ?: listOf(prefix, rawName).filter { it.isNotBlank() }.joinToString("/")
+            longName = null
+            longLink = null
+            pax = null
+            val relative = normalizeEntryPath(name)
+            if (relative == target && type == TYPE_FILE) {
+                return readEntryData(input, size)
+            }
+            skipEntry(input, size)
         }
     }
 

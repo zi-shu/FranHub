@@ -15,6 +15,8 @@ import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import me.rerere.rikkahub.data.backup.BackupPhase
+import me.rerere.rikkahub.data.backup.BackupProgress
 import me.rerere.rikkahub.data.backup.WorkspaceBackup
 import me.rerere.rikkahub.data.backup.WorkspaceBackupManifest
 import me.rerere.rikkahub.data.backup.WorkspaceEntryInfo
@@ -26,10 +28,14 @@ import me.rerere.rikkahub.data.datastore.migration.SettingsJsonMigrator
 import me.rerere.rikkahub.data.db.AppDatabaseFactory
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.SQLiteConfiguration
+import me.rerere.workspace.PackageInventory
+import me.rerere.workspace.TarArchive
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.data.files.MediaCreationFiles
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -171,32 +177,93 @@ class BackupManager(
             }
         }
 
-    /** 只含工作区与 Linux 环境的独立备份包，不含聊天库与设置。 */
-    suspend fun createWorkspaceBackup(workspaces: List<WorkspaceSelection>): File =
+    /**
+     * 把工作区与 Linux 环境写进 [output]。
+     *
+     * 容器是单个 tar，可选 gzip 压缩。直接流式写进用户选定的目标文件，不经过 cacheDir：
+     * 不占两倍空间，也不会因为中间文件被系统清理而中断。
+     * 写入失败时由调用方删除半成品文档。
+     */
+    suspend fun writeWorkspaceArchive(
+        workspaces: List<WorkspaceSelection>,
+        output: OutputStream,
+        compress: Boolean,
+        onProgress: (BackupProgress) -> Unit = {},
+    ) = withContext(Dispatchers.IO) {
+        val archive = WorkspaceBackup.openArchiveOutput(output, compress)
+        writeWorkspaces(archive, workspaces, onProgress)
+        WorkspaceBackup.finishArchive(archive)
+    }
+
+    /** 工作区包恢复：只解工作区条目，不碰数据库、设置与附件。 */
+    suspend fun stageWorkspaceRestore(archive: File, workspaces: WorkspaceRestoreSelection) =
         withContext(Dispatchers.IO) {
-            val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-            val archive = File.createTempFile("workspaces_${timestamp}_", ".zip", context.cacheDir)
-            try {
-                ZipOutputStream(FileOutputStream(archive)).use { zip ->
-                    writeWorkspaces(zip, workspaces)
-                }
-                archive
-            } catch (e: Throwable) {
-                archive.delete()
-                throw e
+            if (WorkspaceBackup.isTarArchive(archive)) {
+                stageWorkspaceRestoreFromTar(archive, workspaces)
+            } else {
+                // 0.2.0 及更早版本用 zip 容器，保留读取路径
+                stageRestore(
+                    archive = archive,
+                    includeDatabase = false,
+                    includeFiles = false,
+                    workspaces = workspaces,
+                )
             }
         }
 
-    /** 工作区包恢复：只解工作区 tar，不碰数据库、设置与附件。 */
-    suspend fun stageWorkspaceRestore(archive: File, workspaces: WorkspaceRestoreSelection) =
-        stageRestore(
-            archive = archive,
-            includeDatabase = false,
-            includeFiles = false,
-            workspaces = workspaces,
-        )
+    /**
+     * tar 包恢复：把选中的 `workspaces/<root>/{files,linux}/...` 解到暂存目录。
+     *
+     * 归档顺序读，未选中的条目只跳过数据区，不解包。
+     */
+    private suspend fun stageWorkspaceRestoreFromTar(
+        archive: File,
+        workspaces: WorkspaceRestoreSelection,
+    ) = restoreMutex.withLock {
+        val restore = pendingRestore(context)
+        val staging = restore.createStagingDirectory()
+        try {
+            var restoredEntries = 0
+            val input = WorkspaceBackup.openArchive(archive)
+            try {
+                TarArchive.extract(
+                    input = input,
+                    targetDir = staging,
+                    filter = { path -> matchesWorkspaceEntry(path, workspaces) },
+                    onEntry = { restoredEntries++ },
+                )
+            } finally {
+                runCatching { input.close() }
+            }
+            require(restoredEntries > 0) { "No selected data found in the backup" }
+            WorkspaceBackup.writeOptions(
+                File(staging, WorkspaceBackup.WORKSPACES_DIR),
+                workspaces.mode,
+            )
+            currentCoroutineContext().ensureActive()
+            restore.publish(staging)
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
 
-    /** 处理 `workspaces/<root>/files.tar` 一类条目，返回 true 表示确实解包了内容。 */
+    /** 归档条目是否属于用户勾选的工作区与项目。 */
+    private fun matchesWorkspaceEntry(path: String, selection: WorkspaceRestoreSelection): Boolean {
+        val prefix = "${WorkspaceBackup.WORKSPACES_DIR}/"
+        if (!path.startsWith(prefix)) return false
+        val rest = path.removePrefix(prefix)
+        val root = rest.substringBefore('/')
+        if (!WORKSPACE_ROOT_REGEX.matches(root)) return false
+        val tail = rest.substringAfter('/', "")
+        val kind = when {
+            tail == "files" || tail.startsWith("files/") -> "files"
+            tail == "linux" || tail.startsWith("linux/") -> "linux"
+            else -> return false
+        }
+        return root in (if (kind == "files") selection.filesRoots else selection.linuxRoots)
+    }
+
+    /** 处理 zip 容器里的 `workspaces/<root>/files.tar` 一类条目，返回 true 表示确实解包了内容。 */
     private fun restoreWorkspaceEntry(
         zip: ZipFile,
         entry: ZipEntry,
@@ -220,65 +287,142 @@ class BackupManager(
         return true
     }
 
-    /** 写 `workspaces/<root>/{files,linux}.tar`、清单与包管理器清单。 */
-    private fun writeWorkspaces(zip: ZipOutputStream, workspaces: List<WorkspaceSelection>) {
-        val entries = mutableListOf<WorkspaceEntryInfo>()
-        val inventories = mutableListOf<me.rerere.workspace.PackageInventory>()
-        for (selection in workspaces) {
-            if (!WORKSPACE_ROOT_REGEX.matches(selection.root)) continue
-            val workspaceDir = WorkspaceBackup.workspaceDir(context.filesDir, selection.root)
-            val workspaceFiles = File(workspaceDir, "files")
-            val linuxDir = File(workspaceDir, "linux")
-            var filesCount = 0
-            var filesBytes = 0L
-            var linuxCount = 0
-            var linuxBytes = 0L
-            if (selection.includeFiles && workspaceFiles.isDirectory) {
-                val stats = WorkspaceBackup.scan(workspaceFiles)
-                filesCount = stats.first
-                filesBytes = stats.second
-                zip.putNextEntry(ZipEntry(WorkspaceBackup.filesTarEntry(selection.root)))
-                WorkspaceBackup.writeTar(workspaceFiles, zip)
-                zip.closeEntry()
+    /**
+     * 写清单、包管理器清单与各工作区的目录树。
+     *
+     * 条目路径统一为 `workspaces/<root>/files/...` 与 `workspaces/<root>/linux/...`，
+     * 归档里不再套第二层 tar，写入端可以一路流式追加，不必事先知道整包大小。
+     */
+    private suspend fun writeWorkspaces(
+        sink: OutputStream,
+        workspaces: List<WorkspaceSelection>,
+        onProgress: (BackupProgress) -> Unit,
+    ) {
+        data class Planned(
+            val selection: WorkspaceSelection,
+            val filesDir: File,
+            val linuxDir: File,
+            val files: Pair<Int, Long>,
+            val linux: Pair<Int, Long>,
+            val packages: PackageInventory,
+        )
+
+        onProgress(BackupProgress(phase = BackupPhase.SCANNING))
+        val planned = workspaces
+            .filter { WORKSPACE_ROOT_REGEX.matches(it.root) }
+            .map { selection ->
+                val workspaceDir = WorkspaceBackup.workspaceDir(context.filesDir, selection.root)
+                val filesDir = File(workspaceDir, "files")
+                val linuxDir = File(workspaceDir, "linux")
+                Planned(
+                    selection = selection,
+                    filesDir = filesDir,
+                    linuxDir = linuxDir,
+                    files = if (selection.includeFiles) WorkspaceBackup.scan(filesDir) else 0 to 0L,
+                    linux = if (selection.includeLinux) WorkspaceBackup.scan(linuxDir) else 0 to 0L,
+                    packages = if (selection.includeLinux) {
+                        PackageInventory.collect(linuxDir)
+                    } else {
+                        PackageInventory()
+                    },
+                )
             }
-            if (selection.includeLinux && linuxDir.isDirectory) {
-                val stats = WorkspaceBackup.scan(linuxDir)
-                linuxCount = stats.first
-                linuxBytes = stats.second
-                zip.putNextEntry(ZipEntry(WorkspaceBackup.linuxTarEntry(selection.root)))
-                WorkspaceBackup.writeTar(linuxDir, zip)
-                zip.closeEntry()
-                inventories += me.rerere.workspace.PackageInventory.collect(linuxDir)
-            }
-            entries += WorkspaceEntryInfo(
-                root = selection.root,
-                name = selection.name,
-                hasFiles = filesCount > 0,
-                hasLinux = linuxCount > 0,
-                filesCount = filesCount,
-                filesBytes = filesBytes,
-                linuxCount = linuxCount,
-                linuxBytes = linuxBytes,
+        currentCoroutineContext().ensureActive()
+        val totalBytes = planned.sumOf { it.files.second + it.linux.second }
+        val totalEntries = planned.sumOf { it.files.first + it.linux.first }
+
+        var doneEntries = 0
+        var writtenBytes = 0L
+        val counter = WorkspaceBackup.CountingOutputStream(sink) { written ->
+            writtenBytes = written
+            onProgress(
+                BackupProgress(
+                    phase = BackupPhase.WRITING,
+                    doneBytes = written,
+                    totalBytes = totalBytes,
+                    entries = doneEntries,
+                )
             )
         }
+        val writer = TarArchive.TarWriter(counter)
+
+        // 清单排在包首：恢复端读开头就能拿到内容与体积
         val manifest = WorkspaceBackupManifest(
             createdAt = LocalDateTime.now().toString(),
             exclusions = WorkspaceBackup.EXCLUDED_LABELS,
-            workspaces = entries,
+            workspaces = planned.map { plan ->
+                WorkspaceEntryInfo(
+                    root = plan.selection.root,
+                    name = plan.selection.name,
+                    hasFiles = plan.files.first > 0,
+                    hasLinux = plan.linux.first > 0,
+                    filesCount = plan.files.first,
+                    filesBytes = plan.files.second,
+                    linuxCount = plan.linux.first,
+                    linuxBytes = plan.linux.second,
+                )
+            },
         )
-        zip.putNextEntry(ZipEntry(WorkspaceBackup.MANIFEST_ENTRY))
-        zip.write(json.encodeToString(WorkspaceBackupManifest.serializer(), manifest).toByteArray(Charsets.UTF_8))
-        zip.closeEntry()
+        writer.bytes(
+            WorkspaceBackup.MANIFEST_ENTRY,
+            json.encodeToString(WorkspaceBackupManifest.serializer(), manifest).toByteArray(Charsets.UTF_8),
+        )
 
-        val merged = me.rerere.workspace.PackageInventory(
-            apk = inventories.flatMap { it.apk }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
-            dpkg = inventories.flatMap { it.dpkg }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
-            pip = inventories.flatMap { it.pip }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
-            npm = inventories.flatMap { it.npm }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+        val packages = PackageInventory(
+            apk = planned.flatMap { it.packages.apk }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+            dpkg = planned.flatMap { it.packages.dpkg }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+            pip = planned.flatMap { it.packages.pip }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
+            npm = planned.flatMap { it.packages.npm }.distinctBy { it.name.lowercase() }.sortedBy { it.name },
         )
-        zip.putNextEntry(ZipEntry(WorkspaceBackup.PACKAGES_ENTRY))
-        zip.write(json.encodeToString(me.rerere.workspace.PackageInventory.serializer(), merged).toByteArray(Charsets.UTF_8))
-        zip.closeEntry()
+        writer.bytes(
+            WorkspaceBackup.PACKAGES_ENTRY,
+            json.encodeToString(PackageInventory.serializer(), packages).toByteArray(Charsets.UTF_8),
+        )
+
+        val reportEntry: (String) -> Unit = { path ->
+            onProgress(
+                BackupProgress(
+                    phase = BackupPhase.WRITING,
+                    doneBytes = writtenBytes,
+                    totalBytes = totalBytes,
+                    entries = doneEntries,
+                    current = path,
+                )
+            )
+        }
+
+        for (plan in planned) {
+            currentCoroutineContext().ensureActive()
+            val root = plan.selection.root
+            if (plan.selection.includeFiles && plan.filesDir.isDirectory) {
+                writer.directoryTree(
+                    sourceDir = plan.filesDir,
+                    prefix = "${WorkspaceBackup.WORKSPACES_DIR}/$root/files",
+                    filter = { path -> !WorkspaceBackup.isExcluded(path) },
+                    onEntry = { path, _ -> reportEntry(path) },
+                )
+                doneEntries += plan.files.first
+            }
+            if (plan.selection.includeLinux && plan.linuxDir.isDirectory) {
+                writer.directoryTree(
+                    sourceDir = plan.linuxDir,
+                    prefix = "${WorkspaceBackup.WORKSPACES_DIR}/$root/linux",
+                    filter = { path -> !WorkspaceBackup.isExcluded(path) },
+                    onEntry = { path, _ -> reportEntry(path) },
+                )
+                doneEntries += plan.linux.first
+            }
+        }
+
+        writer.finish()
+        onProgress(
+            BackupProgress(
+                phase = BackupPhase.FINISHING,
+                doneBytes = totalBytes,
+                totalBytes = totalBytes,
+                entries = totalEntries,
+            )
+        )
     }
 
     private fun isAttachment(name: String): Boolean {

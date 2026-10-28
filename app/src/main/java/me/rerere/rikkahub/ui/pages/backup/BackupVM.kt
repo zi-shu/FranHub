@@ -2,20 +2,27 @@ package me.rerere.rikkahub.ui.pages.backup
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.util.Log
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.backup.BackupPhase
+import me.rerere.rikkahub.data.backup.BackupProgress
+import me.rerere.rikkahub.data.backup.BackupTaskKind
+import me.rerere.rikkahub.data.backup.BackupTaskRunner
+import me.rerere.rikkahub.data.backup.BackupTaskState
+import me.rerere.rikkahub.data.backup.PendingWorkspaceRestore
 import me.rerere.rikkahub.data.backup.WorkspaceBackup
 import me.rerere.rikkahub.data.backup.WorkspaceBackupManifest
 import me.rerere.rikkahub.data.backup.WorkspaceRestoreMode
@@ -45,23 +52,7 @@ import java.util.zip.ZipFile
 
 private const val TAG = "BackupVM"
 
-/** 备份与恢复作业的进度。放在 ViewModel 里，切页面或离开界面不会中断。 */
-sealed interface BackupJob {
-    data object Idle : BackupJob
-    data object Running : BackupJob
-    data class Failed(val message: String) : BackupJob
-
-    /** [restartRequired] 为真时提示用户重启，工作区换目录与聊天库恢复都在启动时生效。 */
-    data class Completed(val restartRequired: Boolean) : BackupJob
-}
-
 enum class BackupTarget { CHAT, WORKSPACE }
-
-/** 已读入内存的工作区备份包，等用户在弹窗里选完再恢复。 */
-class PendingWorkspaceRestore(
-    val file: File,
-    val manifest: WorkspaceBackupManifest,
-)
 
 class BackupVM(
     private val context: Context,
@@ -73,6 +64,7 @@ class BackupVM(
     private val backupManager: BackupManager,
     private val workspaceManager: WorkspaceManager,
     private val workspaceDao: WorkspaceDAO,
+    private val runner: BackupTaskRunner,
 ) : ViewModel() {
     val settings = settingsStore.settingsFlow.stateIn(
         scope = viewModelScope,
@@ -131,14 +123,18 @@ class BackupVM(
 
     /** 读取备份包里的工作区清单；不是新版备份时返回 null。 */
     suspend fun readWorkspaceManifest(file: File): WorkspaceBackupManifest? = withContext(Dispatchers.IO) {
-        runCatching {
-            ZipFile(file).use { zip ->
-                val entry = zip.getEntry(WorkspaceBackup.MANIFEST_ENTRY) ?: return@use null
-                zip.getInputStream(entry).bufferedReader().use { reader ->
-                    WorkspaceBackup.readManifest(reader.readText())
+        if (WorkspaceBackup.isTarArchive(file)) {
+            WorkspaceBackup.readManifestFromArchive(file)
+        } else {
+            runCatching {
+                ZipFile(file).use { zip ->
+                    val entry = zip.getEntry(WorkspaceBackup.MANIFEST_ENTRY) ?: return@use null
+                    zip.getInputStream(entry).bufferedReader().use { reader ->
+                        WorkspaceBackup.readManifest(reader.readText())
+                    }
                 }
-            }
-        }.getOrNull()
+            }.getOrNull()
+        }
     }
 
     fun loadBackupFileItems() {
@@ -191,11 +187,11 @@ class BackupVM(
         )
     }
 
-    /** 工作区包：只含工作区文件与 Linux 环境，不含聊天库与设置。 */
-    suspend fun exportWorkspaceBackup(): File {
+    /** 当前勾选的工作区，导出与体积预估共用。 */
+    private fun workspaceSelections(): List<WorkspaceSelection> {
         val items = workspaceBackupItems.value
         val selected = selectedWorkspaceRoots.value
-        val selections = workspaces.value
+        return workspaces.value
             .filter { !it.isSsh() }
             .filter { selected.isEmpty() || it.root in selected }
             .map {
@@ -206,7 +202,18 @@ class BackupVM(
                     includeLinux = WorkspaceBackupItem.LINUX in items,
                 )
             }
-        return backupManager.createWorkspaceBackup(selections)
+    }
+
+    /** 统一入口：作业交给运行器，在 IO 线程里执行 [block]。 */
+    private fun launchTask(
+        kind: BackupTaskKind,
+        restartRequired: Boolean,
+        block: suspend () -> Unit,
+    ) {
+        runner.start(kind) {
+            withContext(Dispatchers.IO) { block() }
+            restartRequired
+        }
     }
 
     suspend fun restoreWorkspaceBackup(file: File, selection: WorkspaceRestoreSelection) {
@@ -328,21 +335,10 @@ class BackupVM(
 
     // ---- 备份与恢复作业 ----
 
-    private val _backupJob = MutableStateFlow<BackupJob>(BackupJob.Idle)
-    val backupJob = _backupJob.asStateFlow()
+    /** 作业状态在应用作用域的 [BackupTaskRunner] 里，离开页面不中断。 */
+    val backupJob: StateFlow<BackupTaskState> = runner.state
 
-    // 忙碌标志照官方 WebDAV 页的写法：一个动作一个标志，界面只点亮对应那一行
-    val isChatExporting = MutableStateFlow(false)
-    val isChatImporting = MutableStateFlow(false)
-    val isWorkspaceExporting = MutableStateFlow(false)
-    val isWorkspaceImporting = MutableStateFlow(false)
-
-    private fun anyBusy(): Boolean =
-        isChatExporting.value || isChatImporting.value ||
-            isWorkspaceExporting.value || isWorkspaceImporting.value
-
-    private val _pendingWorkspaceRestore = MutableStateFlow<PendingWorkspaceRestore?>(null)
-    val pendingWorkspaceRestore = _pendingWorkspaceRestore.asStateFlow()
+    val pendingWorkspaceRestore: StateFlow<PendingWorkspaceRestore?> = runner.pendingWorkspaceRestore
 
     /** 工作区体积，进入选择弹窗或导出确认前刷新。 */
     val workspaceSizesState = MutableStateFlow<Map<String, WorkspaceSize>>(emptyMap())
@@ -369,178 +365,101 @@ class BackupVM(
         }
     }
 
-    fun acknowledgeJob() {
-        _backupJob.value = BackupJob.Idle
-    }
+    fun acknowledgeJob() = runner.acknowledge()
 
-    fun dismissPendingWorkspaceRestore() {
-        _pendingWorkspaceRestore.value?.file?.delete()
-        _pendingWorkspaceRestore.value = null
-    }
+    fun dismissPendingWorkspaceRestore() = runner.clearPendingWorkspaceRestore()
 
     /** 导出到用户选定的 Uri。工作区包与聊天包共用一条链路。 */
-    fun startExport(target: BackupTarget, uri: Uri) {
-        val busyFlag = if (target == BackupTarget.CHAT) isChatExporting else isWorkspaceExporting
-        if (anyBusy()) return
-        viewModelScope.launch {
-            busyFlag.value = true
-            _backupJob.value = BackupJob.Running
-            _backupJob.value = try {
-                withContext(Dispatchers.IO) {
-                    val file = when (target) {
-                        BackupTarget.CHAT -> webDavSync.prepareBackupFile(
-                            settings.value.webDavConfig.copy(items = localBackupItems.value)
-                        )
+    fun startExport(target: BackupTarget, uri: Uri, compress: Boolean = false) {
+        val kind = if (target == BackupTarget.CHAT) BackupTaskKind.CHAT_EXPORT else BackupTaskKind.WORKSPACE_EXPORT
+        // 设置与勾选先取出来：作业可能在页面销毁后继续跑
+        val config = settings.value.webDavConfig.copy(items = localBackupItems.value)
+        val selections = workspaceSelections()
+        runner.start(kind) { report ->
+            withContext(Dispatchers.IO) {
+                when (target) {
+                    BackupTarget.CHAT -> {
+                        val file = webDavSync.prepareBackupFile(config)
+                        try {
+                            report(BackupProgress(phase = BackupPhase.WRITING))
+                            context.contentResolver.openOutputStream(uri)?.use { output ->
+                                file.inputStream().use { input -> input.copyTo(output) }
+                            } ?: error(exportWriteFailed())
+                        } finally {
+                            file.delete()
+                        }
+                        recordBackupTime()
+                    }
 
-                        BackupTarget.WORKSPACE -> exportWorkspaceBackup()
+                    BackupTarget.WORKSPACE -> {
+                        val output = context.contentResolver.openOutputStream(uri)
+                            ?: error(exportWriteFailed())
+                        try {
+                            output.use { backupManager.writeWorkspaceArchive(selections, it, compress, report) }
+                        } catch (e: Throwable) {
+                            // 失败时删掉半成品，别在用户目录里留一个打不开的包
+                            runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                            throw e
+                        }
                     }
-                    try {
-                        context.contentResolver.openOutputStream(uri)?.use { output ->
-                            file.inputStream().use { input -> input.copyTo(output) }
-                        } ?: error("无法写入所选位置")
-                    } finally {
-                        file.delete()
-                    }
-                    if (target == BackupTarget.CHAT) recordBackupTime()
                 }
-                BackupJob.Completed(restartRequired = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e.printStackTrace()
-                BackupJob.Failed(e.message ?: e.toString())
             }
-            busyFlag.value = false
+            false
         }
     }
 
+    private fun exportWriteFailed(): String = context.getString(R.string.backup_page_export_failed_write)
+
     /** 聊天记录包导入，结束需要重启。 */
-    fun startChatImport(uri: Uri) {
-        if (anyBusy()) return
-        viewModelScope.launch {
-            isChatImporting.value = true
-            _backupJob.value = BackupJob.Running
-            _backupJob.value = try {
-                withContext(Dispatchers.IO) {
-                    val temp = copyToCache(uri, "temp_restore")
-                    try {
-                        restoreFromLocalFile(temp)
-                    } finally {
-                        temp.delete()
-                    }
-                }
-                BackupJob.Completed(restartRequired = true)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e.printStackTrace()
-                BackupJob.Failed(e.message ?: e.toString())
-            }
-            isChatImporting.value = false
+    fun startChatImport(uri: Uri) = launchTask(BackupTaskKind.CHAT_IMPORT, restartRequired = true) {
+        val temp = copyToCache(uri, "temp_restore")
+        try {
+            restoreFromLocalFile(temp)
+        } finally {
+            temp.delete()
         }
     }
 
     /** 工作区包导入：先读清单，有内容就挂起等用户挑。 */
-    fun startWorkspaceImport(uri: Uri) {
-        if (anyBusy()) return
-        viewModelScope.launch {
-            isWorkspaceImporting.value = true
-            _backupJob.value = BackupJob.Running
-            _backupJob.value = try {
-                withContext(Dispatchers.IO) {
-                    val temp = copyToCache(uri, "temp_ws")
-                    val manifest = readWorkspaceManifest(temp)
-                    if (manifest == null) {
-                        temp.delete()
-                        error(context.getString(R.string.backup_page_workspace_invalid))
-                    }
-                    _pendingWorkspaceRestore.value = PendingWorkspaceRestore(temp, manifest)
-                }
-                BackupJob.Idle
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e.printStackTrace()
-                BackupJob.Failed(e.message ?: e.toString())
+    fun startWorkspaceImport(uri: Uri) =
+        launchTask(BackupTaskKind.WORKSPACE_IMPORT, restartRequired = false) {
+            val temp = copyToCache(uri, "temp_ws")
+            val manifest = readWorkspaceManifest(temp)
+            if (manifest == null) {
+                temp.delete()
+                error(context.getString(R.string.backup_page_workspace_invalid))
             }
-            isWorkspaceImporting.value = false
+            runner.setPendingWorkspaceRestore(PendingWorkspaceRestore(temp, manifest))
         }
-    }
 
     /** 用户在工作区恢复弹窗里确认后执行。 */
     fun startWorkspaceRestore(selection: WorkspaceRestoreSelection) {
-        val pending = _pendingWorkspaceRestore.value ?: return
-        _pendingWorkspaceRestore.value = null
-        if (anyBusy()) return
-        viewModelScope.launch {
-            isWorkspaceImporting.value = true
-            _backupJob.value = BackupJob.Running
-            _backupJob.value = try {
-                withContext(Dispatchers.IO) {
-                    try {
-                        restoreWorkspaceBackup(pending.file, selection)
-                    } finally {
-                        pending.file.delete()
-                    }
-                }
-                BackupJob.Completed(restartRequired = true)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e.printStackTrace()
-                BackupJob.Failed(e.message ?: e.toString())
+        if (runner.isRunning()) return
+        val pending = runner.takePendingWorkspaceRestore() ?: return
+        launchTask(BackupTaskKind.WORKSPACE_RESTORE, restartRequired = true) {
+            try {
+                restoreWorkspaceBackup(pending.file, selection)
+            } finally {
+                pending.file.delete()
             }
-            isWorkspaceImporting.value = false
         }
     }
 
-    fun startChatboxImport(uri: Uri) {
-        if (anyBusy()) return
-        viewModelScope.launch {
-            isChatImporting.value = true
-            _backupJob.value = BackupJob.Running
-            _backupJob.value = try {
-                withContext(Dispatchers.IO) {
-                    val temp = copyToCache(uri, "temp_chatbox")
-                    try {
-                        restoreFromChatBox(temp)
-                    } finally {
-                        temp.delete()
-                    }
-                }
-                BackupJob.Completed(restartRequired = true)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e.printStackTrace()
-                BackupJob.Failed(e.message ?: e.toString())
-            }
-            isChatImporting.value = false
+    fun startChatboxImport(uri: Uri) = launchTask(BackupTaskKind.CHATBOX_IMPORT, restartRequired = true) {
+        val temp = copyToCache(uri, "temp_chatbox")
+        try {
+            restoreFromChatBox(temp)
+        } finally {
+            temp.delete()
         }
     }
 
-    fun startCherryImport(uri: Uri) {
-        if (anyBusy()) return
-        viewModelScope.launch {
-            isChatImporting.value = true
-            _backupJob.value = BackupJob.Running
-            _backupJob.value = try {
-                withContext(Dispatchers.IO) {
-                    val temp = copyToCache(uri, "temp_cherry")
-                    try {
-                        restoreFromCherryStudio(temp)
-                    } finally {
-                        temp.delete()
-                    }
-                }
-                BackupJob.Completed(restartRequired = true)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e.printStackTrace()
-                BackupJob.Failed(e.message ?: e.toString())
-            }
-            isChatImporting.value = false
+    fun startCherryImport(uri: Uri) = launchTask(BackupTaskKind.CHERRY_IMPORT, restartRequired = true) {
+        val temp = copyToCache(uri, "temp_cherry")
+        try {
+            restoreFromCherryStudio(temp)
+        } finally {
+            temp.delete()
         }
     }
 

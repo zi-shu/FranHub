@@ -182,9 +182,9 @@
   <string name="backup_page_workspace_files_desc">只含 /workspace 里的文件</string>
   <string name="backup_page_linux_desc">rootfs 里除 /workspace 之外的全部</string>
   <string name="backup_page_workspace_export">导出工作区备份</string>
-  <string name="backup_page_workspace_export_desc">生成独立 zip，不含聊天记录</string>
+  <string name="backup_page_workspace_export_desc">生成独立备份包（tar 或 tar.gz），不含聊天记录</string>
   <string name="backup_page_workspace_import">导入工作区备份</string>
-  <string name="backup_page_workspace_import_desc">从该 zip 恢复工作区文件与环境</string>
+  <string name="backup_page_workspace_import_desc">从该备份包恢复工作区文件与环境</string>
   <string name="backup_page_workspace_empty_items">至少选择一项</string>
   <string name="backup_page_workspace_invalid">不是工作区备份包</string>
   <string name="backup_page_files">文件</string>
@@ -1806,4 +1806,16 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_model_page_memory_model">记忆整理模型</string>
   <string name="setting_model_page_memory_model_desc">用于在后台将对话整理为长期记忆的模型；未设置时使用快速模型</string>
   <string name="setting_model_page_memory_model_follow_fast">跟随快速模型</string>
+  <string name="backup_page_compress">压缩备份包（.tar.gz）</string>
+  <string name="backup_page_compress_desc">包体更小，耗时更长，机身发热更多</string>
+  <string name="backup_page_export_failed_write">无法写入所选位置</string>
+  <string name="backup_notification_channel">备份与恢复</string>
+  <string name="backup_notification_scanning">正在统计文件</string>
+  <string name="backup_notification_exporting_workspace">正在导出工作区</string>
+  <string name="backup_notification_exporting_chat">正在导出聊天记录</string>
+  <string name="backup_notification_restoring">正在恢复</string>
+  <string name="backup_notification_done">备份完成</string>
+  <string name="backup_notification_restore_done">恢复完成，重启后生效</string>
+  <string name="backup_notification_failed">备份失败：%1$s</string>
+  <string name="backup_notification_restore_failed">恢复失败：%1$s</string>
 </resources>

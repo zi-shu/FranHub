@@ -182,9 +182,9 @@
   <string name="backup_page_workspace_files_desc">Only the files in /workspace</string>
   <string name="backup_page_linux_desc">Everything in the rootfs except /workspace</string>
   <string name="backup_page_workspace_export">Export workspace backup</string>
-  <string name="backup_page_workspace_export_desc">Writes a separate zip without chat records</string>
+  <string name="backup_page_workspace_export_desc">Writes a separate package (tar or tar.gz) without chat records</string>
   <string name="backup_page_workspace_import">Import workspace backup</string>
-  <string name="backup_page_workspace_import_desc">Restore workspace files and environment from that zip</string>
+  <string name="backup_page_workspace_import_desc">Restore workspace files and environment from that package</string>
   <string name="backup_page_workspace_empty_items">Select at least one item</string>
   <string name="backup_page_workspace_invalid">Not a workspace backup file</string>
   <string name="backup_page_files">Files</string>
@@ -1804,4 +1804,16 @@
   <string name="setting_model_page_memory_model">Memory Consolidation Model</string>
   <string name="setting_model_page_memory_model_desc">Model used to organize conversations into long-term memory in the background; uses the fast model when not set</string>
   <string name="setting_model_page_memory_model_follow_fast">Same as fast model</string>
+  <string name="backup_page_compress">Compress the package (.tar.gz)</string>
+  <string name="backup_page_compress_desc">Smaller file, longer run, more heat</string>
+  <string name="backup_page_export_failed_write">Cannot write the selected location</string>
+  <string name="backup_notification_channel">Backup and restore</string>
+  <string name="backup_notification_scanning">Scanning files</string>
+  <string name="backup_notification_exporting_workspace">Exporting workspaces</string>
+  <string name="backup_notification_exporting_chat">Exporting chat data</string>
+  <string name="backup_notification_restoring">Restoring</string>
+  <string name="backup_notification_done">Backup finished</string>
+  <string name="backup_notification_restore_done">Restore finished. Restart to apply.</string>
+  <string name="backup_notification_failed">Backup failed: %1$s</string>
+  <string name="backup_notification_restore_failed">Restore failed: %1$s</string>
 </resources>

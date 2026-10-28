@@ -58,6 +58,7 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
 const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 const val MEDIA_CREATION_NOTIFICATION_CHANNEL_ID = "media_creation"
 const val MEMORY_DREAM_NOTIFICATION_CHANNEL_ID = "memory_dream"
+const val BACKUP_NOTIFICATION_CHANNEL_ID = "backup_task"
 
 class RikkaHubApp : Application() {
     override fun onCreate() {
@@ -302,6 +303,14 @@ class RikkaHubApp : Application() {
             .setShowBadge(false)
             .build()
         notificationManager.createNotificationChannel(memoryDreamChannel)
+
+        val backupChannel = NotificationChannelCompat
+            .Builder(BACKUP_NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
+            .setName(getString(R.string.backup_notification_channel))
+            .setVibrationEnabled(false)
+            .setShowBadge(false)
+            .build()
+        notificationManager.createNotificationChannel(backupChannel)
     }
 
     override fun onTerminate() {
