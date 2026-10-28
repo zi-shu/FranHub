@@ -659,7 +659,7 @@ private fun RootfsProgress(progress: RootfsInstallProgress) {
 }
 
 @Composable
-private fun InstallRootfsDialog(
+internal fun InstallRootfsDialog(
     workspace: WorkspaceEntity,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
@@ -1204,5 +1204,5 @@ internal fun String.toShellStatusLabel(): String = when (this) {
     else -> lowercase()
 }
 
-private const val DEFAULT_ROOTFS_URL =
+internal const val DEFAULT_ROOTFS_URL =
     "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-arm64.tar.gz"

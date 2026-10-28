@@ -1816,4 +1816,11 @@
   <string name="backup_notification_restore_done">Restore finished. Restart to apply.</string>
   <string name="backup_notification_failed">Backup failed: %1$s</string>
   <string name="backup_notification_restore_failed">Restore failed: %1$s</string>
+  <string name="backup_page_rootfs_missing_title">Workspace has no Linux environment</string>
+  <string name="backup_page_rootfs_missing_desc">%1$s has no Linux environment after the restore. Install a rootfs to use the shell and workspace tools.</string>
+  <string name="backup_page_rootfs_install">Install rootfs</string>
+  <string name="backup_page_rootfs_downloading">Downloading %1$s / %2$s</string>
+  <string name="backup_page_rootfs_downloading_unknown">Downloading %1$s</string>
+  <string name="backup_page_rootfs_extracting">Extracting, %1$d entries written</string>
+  <string name="backup_page_rootfs_installed">Install finished</string>
 </resources>

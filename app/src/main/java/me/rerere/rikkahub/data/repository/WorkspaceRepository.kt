@@ -64,11 +64,19 @@ class WorkspaceRepository(
                 continue
             }
             val statusName = workspace.shellStatus
-            if ((statusName == WorkspaceShellStatus.READY.name || statusName == WorkspaceShellStatus.INSTALLING.name) &&
-                !manager.hasRootfs(workspace.root)
-            ) {
-                Log.w(TAG, "Rootfs missing, resetting shell status: id=${workspace.id}")
-                updateShellState(workspace.id, WorkspaceShellStatus.DISABLED.name)
+            val hasRootfs = manager.hasRootfs(workspace.root)
+            when {
+                // 恢复备份或手动拷入 Rootfs 后目录可能已经就位，状态要跟着上线。
+                // 旧逻辑只往下压不往上提，恢复完 Linux 环境仍停在「错误」。
+                hasRootfs && statusName != WorkspaceShellStatus.READY.name -> {
+                    Log.i(TAG, "Rootfs present, marking workspace ready: id=${workspace.id}")
+                    updateShellState(workspace.id, WorkspaceShellStatus.READY.name)
+                }
+                // 目录在、Rootfs 不在：这是「没装」，不是「坏了」
+                !hasRootfs && statusName != WorkspaceShellStatus.DISABLED.name -> {
+                    Log.w(TAG, "Rootfs missing, resetting shell status: id=${workspace.id}")
+                    updateShellState(workspace.id, WorkspaceShellStatus.DISABLED.name)
+                }
             }
         }
     }

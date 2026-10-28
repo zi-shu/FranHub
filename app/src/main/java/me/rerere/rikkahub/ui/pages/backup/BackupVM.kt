@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -36,6 +37,7 @@ import me.rerere.rikkahub.data.datastore.WebDavConfig
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.files.saveUploadFromBytes
 import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.sync.importer.ChatboxImporter
 import me.rerere.rikkahub.data.sync.importer.CherryStudioProviderImporter
 import me.rerere.rikkahub.data.sync.webdav.WebDavBackupItem
@@ -45,6 +47,8 @@ import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.sync.S3Sync
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
+import me.rerere.workspace.RootfsInstallProgress
+import me.rerere.workspace.RootfsInstallStage
 import me.rerere.workspace.WorkspaceManager
 import me.rerere.rikkahub.utils.UiState
 import java.io.File
@@ -64,6 +68,7 @@ class BackupVM(
     private val backupManager: BackupManager,
     private val workspaceManager: WorkspaceManager,
     private val workspaceDao: WorkspaceDAO,
+    private val workspaceRepository: WorkspaceRepository,
     private val runner: BackupTaskRunner,
 ) : ViewModel() {
     val settings = settingsStore.settingsFlow.stateIn(
@@ -432,6 +437,62 @@ class BackupVM(
             runner.setPendingWorkspaceRestore(PendingWorkspaceRestore(temp, manifest))
         }
 
+    /** 恢复后仍然不会有 Linux 环境的工作区，界面据此提示安装 Rootfs。 */
+    private val _rootfsGaps = MutableStateFlow<List<WorkspaceEntity>>(emptyList())
+    val rootfsGaps: StateFlow<List<WorkspaceEntity>> = _rootfsGaps.asStateFlow()
+
+    /** Rootfs 安装进度，null 表示没有在安装。 */
+    val rootfsInstallProgress = MutableStateFlow<RootfsInstallProgress?>(null)
+    val rootfsInstallError = MutableStateFlow<String?>(null)
+
+    fun dismissRootfsGaps() {
+        _rootfsGaps.value = emptyList()
+    }
+
+    fun dismissRootfsInstallError() {
+        rootfsInstallError.value = null
+    }
+
+    /** 在备份页直接给缺失 Linux 环境的工作区装 Rootfs，走与工作区页同一条安装流程。 */
+    fun installRootfsForGap(workspaceId: String, url: String) {
+        viewModelScope.launch {
+            rootfsInstallError.value = null
+            rootfsInstallProgress.value = RootfsInstallProgress(stage = RootfsInstallStage.DOWNLOADING)
+            try {
+                workspaceRepository.installRootfs(workspaceId, url) { progress ->
+                    rootfsInstallProgress.value = progress
+                }
+                _rootfsGaps.value = _rootfsGaps.value.filterNot { it.id == workspaceId }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                rootfsInstallError.value = e.message ?: "Rootfs 安装失败"
+            } finally {
+                rootfsInstallProgress.value = null
+            }
+        }
+    }
+
+    /**
+     * 恢复后仍缺 Linux 环境的工作区。
+     *
+     * 只要该工作区的 linux 被勾选、且包内确实带了 linux，恢复就会补上，不算缺口。
+     * 其余情况看本机当前是否已有 Rootfs。
+     */
+    private fun rootfsGapsAfterRestore(
+        pending: PendingWorkspaceRestore,
+        selection: WorkspaceRestoreSelection,
+    ): List<WorkspaceEntity> {
+        val restoredRoots = selection.filesRoots + selection.linuxRoots
+        return workspaces.value
+            .filter { it.root in restoredRoots }
+            .filterNot { workspace ->
+                val willRestoreLinux = workspace.root in selection.linuxRoots &&
+                    pending.manifest.workspaces.any { it.root == workspace.root && it.hasLinux }
+                willRestoreLinux || workspaceManager.hasRootfs(workspace.root)
+            }
+    }
+
     /** 用户在工作区恢复弹窗里确认后执行。 */
     fun startWorkspaceRestore(selection: WorkspaceRestoreSelection) {
         if (runner.isRunning()) return
@@ -439,6 +500,7 @@ class BackupVM(
         launchTask(BackupTaskKind.WORKSPACE_RESTORE, restartRequired = true) {
             try {
                 restoreWorkspaceBackup(pending.file, selection)
+                _rootfsGaps.value = rootfsGapsAfterRestore(pending, selection)
             } finally {
                 pending.file.delete()
             }

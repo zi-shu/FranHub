@@ -45,6 +45,9 @@ import me.rerere.rikkahub.data.datastore.WebDavConfig
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalToaster
+import me.rerere.rikkahub.ui.pages.extensions.workspace.InstallRootfsDialog
+import me.rerere.workspace.RootfsInstallProgress
+import me.rerere.workspace.RootfsInstallStage
 import me.rerere.rikkahub.data.backup.BackupPhase
 import me.rerere.rikkahub.data.backup.BackupTaskKind
 import me.rerere.rikkahub.data.backup.BackupTaskState
@@ -78,10 +81,15 @@ fun ImportExportTab(
     val pendingRestore by vm.pendingWorkspaceRestore.collectAsStateWithLifecycle()
     val sizes by vm.workspaceSizesState.collectAsStateWithLifecycle()
     val sizesReady by vm.workspaceSizesReady.collectAsStateWithLifecycle()
+    val rootfsGaps by vm.rootfsGaps.collectAsStateWithLifecycle()
+    val rootfsInstallProgress by vm.rootfsInstallProgress.collectAsStateWithLifecycle()
+    val rootfsInstallError by vm.rootfsInstallError.collectAsStateWithLifecycle()
     var showImportConfirmDialog by remember { mutableStateOf(false) }
     var showWorkspacePicker by remember { mutableStateOf(false) }
     var showExportConfirm by remember { mutableStateOf(false) }
     var exportTarget by remember { mutableStateOf(BackupTarget.CHAT) }
+    // 恢复后缺 Linux 环境时，在这里挂起待安装的工作区
+    var installRootfsTarget by remember { mutableStateOf<WorkspaceEntity?>(null) }
     // 工作区包是否 gzip 压缩：压缩省空间，但 CPU 长时间满载
     var compressWorkspace by remember { mutableStateOf(false) }
 
@@ -462,6 +470,65 @@ fun ImportExportTab(
             onConfirm = { selection -> vm.startWorkspaceRestore(selection) },
         )
     }
+
+    // 恢复后仍没有 Linux 环境的工作区：在这里给出安装入口，不必再跳到工作区详情页
+    if (rootfsGaps.isNotEmpty() && installRootfsTarget == null && rootfsInstallProgress == null) {
+        AlertDialog(
+            onDismissRequest = { vm.dismissRootfsGaps() },
+            title = { Text(stringResource(R.string.backup_page_rootfs_missing_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.backup_page_rootfs_missing_desc,
+                        rootfsGaps.joinToString("、") { it.name },
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { installRootfsTarget = rootfsGaps.first() }) {
+                    Text(stringResource(R.string.backup_page_rootfs_install))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissRootfsGaps() }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    rootfsInstallProgress?.let { progress ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.backup_page_rootfs_install)) },
+            text = { Text(rootfsInstallText(progress)) },
+            confirmButton = {},
+        )
+    }
+
+    rootfsInstallError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissRootfsInstallError() },
+            title = { Text(stringResource(R.string.workspace_detail_rootfs_install_failed)) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { vm.dismissRootfsInstallError() }) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+        )
+    }
+
+    installRootfsTarget?.let { workspace ->
+        InstallRootfsDialog(
+            workspace = workspace,
+            onDismiss = { installRootfsTarget = null },
+            onConfirm = { url ->
+                vm.installRootfsForGap(workspace.id, url)
+                installRootfsTarget = null
+            },
+        )
+    }
 }
 
 @Composable
@@ -645,4 +712,26 @@ private fun exportProgressText(state: BackupTaskState.Running?): String {
 
         BackupPhase.PREPARING -> stringResource(R.string.backup_page_exporting)
     }
+}
+
+/** Rootfs 安装进度文案：下载显示字节数，解压显示条目数。 */
+@Composable
+private fun rootfsInstallText(progress: RootfsInstallProgress): String = when (progress.stage) {
+    RootfsInstallStage.DOWNLOADING -> {
+        val total = progress.totalBytes
+        if (total != null && total > 0) {
+            stringResource(
+                R.string.backup_page_rootfs_downloading,
+                progress.bytesRead.fileSizeToString(),
+                total.fileSizeToString(),
+            )
+        } else {
+            stringResource(R.string.backup_page_rootfs_downloading_unknown, progress.bytesRead.fileSizeToString())
+        }
+    }
+
+    RootfsInstallStage.EXTRACTING ->
+        stringResource(R.string.backup_page_rootfs_extracting, progress.entriesExtracted)
+
+    RootfsInstallStage.INSTALLED -> stringResource(R.string.backup_page_rootfs_installed)
 }

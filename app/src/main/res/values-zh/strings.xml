@@ -1818,4 +1818,11 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="backup_notification_restore_done">恢复完成，重启后生效</string>
   <string name="backup_notification_failed">备份失败：%1$s</string>
   <string name="backup_notification_restore_failed">恢复失败：%1$s</string>
+  <string name="backup_page_rootfs_missing_title">工作区缺少 Linux 环境</string>
+  <string name="backup_page_rootfs_missing_desc">%1$s 恢复后没有 Linux 环境，装好 Rootfs 才能使用 shell 与工作区工具。</string>
+  <string name="backup_page_rootfs_install">安装 Rootfs</string>
+  <string name="backup_page_rootfs_downloading">正在下载 %1$s / %2$s</string>
+  <string name="backup_page_rootfs_downloading_unknown">正在下载 %1$s</string>
+  <string name="backup_page_rootfs_extracting">正在解压，已写 %1$d 个条目</string>
+  <string name="backup_page_rootfs_installed">安装完成</string>
 </resources>
