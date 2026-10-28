@@ -25,6 +25,10 @@ class WorkspaceBackupApplyTest {
         val rootDir = File(staged, root)
 
         File(rootDir, "files/note.txt").apply { parentFile?.mkdirs() }.writeText("来自备份")
+        File(rootDir, "files/run.sh").apply {
+            writeText("#!/bin/sh\necho hi\n")
+            setExecutable(true, false)
+        }
 
         val linux = File(rootDir, "linux")
         File(linux, "usr/bin").mkdirs()
@@ -52,6 +56,8 @@ class WorkspaceBackupApplyTest {
         val files = File(filesDir, "workspaces/all/files")
         assertEquals("来自备份", File(files, "note.txt").readText())
         assertEquals("本地", File(files, "local.txt").readText())
+        // 合并拷贝必须保留可执行位，rootfs 里的 /usr/bin/env 就靠它
+        assertTrue("合并后 run.sh 丢掉可执行位", File(files, "run.sh").canExecute())
 
         val linux = File(filesDir, "workspaces/all/linux")
         assertTrue(Files.isSymbolicLink(File(linux, "bin").toPath()))

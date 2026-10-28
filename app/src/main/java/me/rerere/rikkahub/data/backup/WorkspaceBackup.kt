@@ -406,6 +406,12 @@ object WorkspaceBackup {
                         "工作区条目越界: $relative"
                     }
                     child.copyTo(destination, overwrite = true)
+                    // copyTo 走 FileOutputStream，新建的文件是 0600，可执行位会丢。
+                    // rootfs 里 /usr/bin/env、/bin/sh 这类入口全靠它，丢了 proot 会报 not executable。
+                    val executable = child.canExecute()
+                    destination.setReadable(true, false)
+                    destination.setWritable(true, true)
+                    destination.setExecutable(executable, false)
                 }
             }
         }
