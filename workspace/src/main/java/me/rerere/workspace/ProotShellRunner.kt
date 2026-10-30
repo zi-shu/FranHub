@@ -45,7 +45,15 @@ class ProotShellRunner(
 
         context.tempDir.mkdirs()
         patcher.patch(context.linuxDir)
-        val process = ProcessBuilder(buildCommand(context, proot))
+        // 用 Rootfs 自带的 timeout 包住命令: 到点由它结束命令, proot 才能正常清理子孙并退出
+        val useTimeout = hasTimeoutCommand(context.linuxDir)
+        // 应用层等待比 Rootfs 内超时多留缓冲, 让正常路径走"命令自己结束", 而不是杀不干净的强杀
+        val appTimeoutMillis = if (useTimeout) context.timeoutMillis + TIMEOUT_GRACE_MS else context.timeoutMillis
+        System.err.println(
+            "[FranHubShell] 启动 timeoutMs=${context.timeoutMillis} appTimeoutMs=$appTimeoutMillis " +
+                "rootfsTimeout=$useTimeout cwd=${context.cwd} cmd=${context.command.take(200)}"
+        )
+        val process = ProcessBuilder(buildCommand(context, proot, useTimeout))
             .directory(context.filesDir)
             .redirectErrorStream(false)
             .apply {
@@ -60,7 +68,9 @@ class ProotShellRunner(
             }
             .start()
 
-        return process.readResult(context.timeoutMillis, context.stdin)
+        val result = process.readResult(appTimeoutMillis, context.stdin)
+        // timeout 以 124 表示命令被超时终止, 转成 timedOut 让模型直接看懂
+        return if (useTimeout && result.exitCode == 124) result.copy(timedOut = true) else result
     }
 
     override fun terminalLaunch(context: WorkspaceTerminalContext): WorkspaceTerminalLaunch {
@@ -93,6 +103,7 @@ class ProotShellRunner(
     private fun buildCommand(
         context: WorkspaceShellContext,
         proot: File,
+        useTimeout: Boolean,
     ): List<String> {
         val command = mutableListOf(proot.absolutePath)
         command += prootArgs(context.linuxDir, context.filesDir, context.prootCwd(), context.bindMounts)
@@ -102,6 +113,13 @@ class ProotShellRunner(
             "CI=true",
             "NO_COLOR=1",
             "PAGER=cat",
+        )
+        // timeout 必须排在 env 的变量赋值之后、真正命令之前
+        // 否则 GNU timeout 会把紧跟时长的 CI=true 当成要执行的程序名, 直接以 127 退出
+        if (useTimeout) {
+            command += listOf("timeout", "-k", "5", timeoutSeconds(context.timeoutMillis))
+        }
+        command += listOf(
             WorkspaceManager.rootfsShell(context.linuxDir),
             "-l",
             "-c",
@@ -162,6 +180,17 @@ class ProotShellRunner(
         private const val PROOT_EXEC = "libproot_exec.so"
         private const val PROOT_LOADER = "libproot_loader.so"
         private val WORKSPACE_DIR = WorkspaceManager.ROOTFS_WORKSPACE_DIR
+
+        /** 应用层在 Rootfs 内超时之后额外等待的缓冲, 留时间给 timeout 结束命令 */
+        private const val TIMEOUT_GRACE_MS = 10_000L
+
+        /** Rootfs 内是否带 timeout 命令; 没有时退回原来的直接执行 */
+        private fun hasTimeoutCommand(linuxDir: File): Boolean =
+            File(linuxDir, "usr/bin/timeout").exists() || File(linuxDir, "bin/timeout").exists()
+
+        /** 毫秒换算成 timeout 需要的秒数, 向上取整且至少 1 秒 */
+        private fun timeoutSeconds(millis: Long): String =
+            ((millis + 999) / 1000).coerceAtLeast(1L).toString()
 
         /** 清空宿主机环境变量后 Rootfs 内的基础环境 */
         private val ROOTFS_ENV = listOf(

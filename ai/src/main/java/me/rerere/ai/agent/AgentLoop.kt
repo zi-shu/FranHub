@@ -1,6 +1,8 @@
 package me.rerere.ai.agent
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -163,9 +165,22 @@ internal class AgentLoop(
             // 只给真正运行的工具计时；开始时先写一次，界面才能在执行中实时显示耗时
             val runs = tool.approvalState == ToolApprovalState.Auto || tool.approvalState == ToolApprovalState.Approved
             if (runs) updateTool(tool.toolCallId) { it.copy(startedAt = Clock.System.now(), finishedAt = null) }
-            val output = execute(tool)
-            updateTool(tool.toolCallId) {
-                it.copy(output = output, finishedAt = if (runs) Clock.System.now() else it.finishedAt)
+            var finished = false
+            try {
+                val output = execute(tool)
+                updateTool(tool.toolCallId) {
+                    it.copy(output = output, finishedAt = if (runs) Clock.System.now() else it.finishedAt)
+                }
+                finished = true
+            } finally {
+                // 异常或取消时也要写结束时间, 否则界面会一直显示"执行中"并持续计时
+                if (!finished) {
+                    withContext(NonCancellable) {
+                        updateTool(tool.toolCallId) {
+                            it.copy(finishedAt = if (runs) Clock.System.now() else it.finishedAt)
+                        }
+                    }
+                }
             }
         }
     }

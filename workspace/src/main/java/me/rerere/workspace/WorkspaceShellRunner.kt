@@ -59,6 +59,24 @@ class HostShellRunner : WorkspaceShellRunner {
 const val MAX_OUTPUT_CHARS = 128 * 1024
 
 fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): WorkspaceCommandResult {
+    val beginNanos = System.nanoTime()
+    // 调试看门狗: 超时预算外再等 5 秒仍未返回, 打印全部线程调用栈, 用于定位阻塞位置
+    val watchdog = Thread {
+        try {
+            Thread.sleep(timeoutMillis + 5_000L)
+            val elapsed = (System.nanoTime() - beginNanos) / 1_000_000
+            System.err.println("[FranHubShell] watchdog: 仍未返回 elapsedMs=$elapsed timeoutMs=$timeoutMillis")
+            Thread.getAllStackTraces().entries.take(80).forEach { (thread, stack) ->
+                System.err.println("[FranHubShell] watchdog thread=${thread.name} state=${thread.state}")
+                stack.forEach { frame -> System.err.println("[FranHubShell] watchdog   at $frame") }
+            }
+        } catch (_: InterruptedException) {
+            // 正常返回时被中断, 说明没有阻塞, 不打印
+        }
+    }.apply {
+        isDaemon = true
+        start()
+    }
     val stdout = StreamCollector(inputStream)
     val stderr = StreamCollector(errorStream)
     val stdinWriter = stdin?.let { bytes -> StreamWriter(outputStream, bytes) }
@@ -73,14 +91,22 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
     }
     try {
         val finished = waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
+        val waitedMs = (System.nanoTime() - beginNanos) / 1_000_000
+        System.err.println("[FranHubShell] waitFor 返回 finished=$finished elapsedMs=$waitedMs timeoutMs=$timeoutMillis")
         if (!finished) {
+            val killBeginNanos = System.nanoTime()
             destroyForcibly()
+            System.err.println("[FranHubShell] destroyForcibly 耗时 ${(System.nanoTime() - killBeginNanos) / 1_000_000}ms")
         }
         stdinWriter?.join(1_000)
         stdout.join(1_000)
         stderr.join(1_000)
+        val exitCode = if (finished) exitValue() else -1
+        System.err.println(
+            "[FranHubShell] 返回 exit=$exitCode timedOut=${!finished} totalMs=${(System.nanoTime() - beginNanos) / 1_000_000}"
+        )
         return WorkspaceCommandResult(
-            exitCode = if (finished) exitValue() else -1,
+            exitCode = exitCode,
             stdout = stdout.text(),
             stderr = stderr.text(),
             timedOut = !finished,
@@ -94,6 +120,8 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
         stdout.join(1_000)
         stderr.join(1_000)
         throw e
+    } finally {
+        watchdog.interrupt()
     }
 }
 
