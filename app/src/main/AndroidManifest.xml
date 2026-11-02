@@ -137,6 +137,14 @@
       android:exported="false"
       android:foregroundServiceType="dataSync" />
     <service
+      android:name=".service.ShellForegroundService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="running user-requested shell commands in the workspace" />
+    </service>
+    <service
       android:name=".service.WebServerService"
       android:exported="false"
       android:foregroundServiceType="specialUse">

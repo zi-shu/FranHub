@@ -68,6 +68,7 @@ class ProotShellRunner(
             }
             .start()
 
+        System.err.println("[FranHubShell] 进程已启动 pid=${process.pidOrNull()}")
         val result = process.readResult(appTimeoutMillis, context.stdin)
         // timeout 以 124 表示命令被超时终止, 转成 timedOut 让模型直接看懂
         return if (useTimeout && result.exitCode == 124) result.copy(timedOut = true) else result

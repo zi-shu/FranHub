@@ -60,6 +60,7 @@ const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 const val MEDIA_CREATION_NOTIFICATION_CHANNEL_ID = "media_creation"
 const val MEMORY_DREAM_NOTIFICATION_CHANNEL_ID = "memory_dream"
 const val BACKUP_NOTIFICATION_CHANNEL_ID = "backup_task"
+const val SHELL_NOTIFICATION_CHANNEL_ID = "shell_task"
 
 /** 启动时「正在应用恢复」提示的通知 id，与备份前台服务的 2005 分开。 */
 private const val RESTORE_NOTIFICATION_ID = 2006
@@ -342,6 +343,14 @@ class RikkaHubApp : Application() {
             .setShowBadge(false)
             .build()
         notificationManager.createNotificationChannel(memoryDreamChannel)
+
+        val shellChannel = NotificationChannelCompat
+            .Builder(SHELL_NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
+            .setName(getString(R.string.notification_channel_shell))
+            .setVibrationEnabled(false)
+            .setShowBadge(false)
+            .build()
+        notificationManager.createNotificationChannel(shellChannel)
 
         val backupChannel = NotificationChannelCompat
             .Builder(BACKUP_NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)

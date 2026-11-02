@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.ai.tools
 
+import android.content.Context
+import android.os.PowerManager
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -13,6 +15,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.toMetadata
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.service.ShellForegroundService
 import me.rerere.rikkahub.utils.generateUnifiedDiff
 import me.rerere.workspace.WorkspaceCapabilities
 import me.rerere.workspace.WorkspaceFileEntry
@@ -22,6 +25,8 @@ import org.koin.java.KoinJavaComponent.getKoin
 import java.io.ByteArrayOutputStream
 
 private const val SHELL_TIMEOUT_MAX_SECONDS = 9600L
+// 短命令不值得起前台服务, 通知会一闪而过; 超过这个时长的才进前台
+private const val SHELL_FOREGROUND_THRESHOLD_MS = 60_000L
 private const val MAX_READ_FILE_BYTES = 8L * 1024 * 1024
 
 val WorkspaceToolDefaultApprovals: Map<String, Boolean> = mapOf(
@@ -267,20 +272,58 @@ private fun createShellTool(
             ?.coerceIn(1L, SHELL_TIMEOUT_MAX_SECONDS)
             ?.times(1_000L)
             ?: WorkspaceManager.DEFAULT_COMMAND_TIMEOUT_MS
-        val result = workspaceRepository.executeCommand(workspaceId, command, cwd, timeoutMillis)
-        listOf(
-            UIMessagePart.Text(
-                buildJsonObject {
-                    put("exitCode", result.exitCode)
-                    put("stdout", result.stdout)
-                    put("stderr", result.stderr)
-                    put("timedOut", result.timedOut)
-                    if (result.truncated) put("truncated", true)
-                }.toString()
+        val appContext = getKoin().get<Context>()
+        // 长命令执行期间进前台: 屏幕关闭后系统会把后台进程按停(进程状态变 t),
+        // proot 的 ptrace 随之卡死, 命令既不结束也不退出
+        val useForeground = timeoutMillis >= SHELL_FOREGROUND_THRESHOLD_MS
+        if (useForeground) {
+            ShellForegroundService.start(appContext, command.take(60))
+        }
+        // 同时持有 PARTIAL_WAKE_LOCK: 设备深度睡眠会让单调时钟停走,
+        // sleep 与 timeout 的计时随之冻结, 而界面墙钟照走, 表现为"到点了命令还在跑"
+        val wakeLock = acquireShellWakeLock(timeoutMillis)
+        var completed = false
+        try {
+            val result = workspaceRepository.executeCommand(workspaceId, command, cwd, timeoutMillis)
+            completed = true
+            listOf(
+                UIMessagePart.Text(
+                    buildJsonObject {
+                        put("exitCode", result.exitCode)
+                        put("stdout", result.stdout)
+                        put("stderr", result.stderr)
+                        put("timedOut", result.timedOut)
+                        if (result.truncated) put("truncated", true)
+                    }.toString()
+                )
             )
-        )
+        } finally {
+            System.err.println("[FranHubShell] 工具收尾 completed=$completed")
+            releaseShellWakeLock(wakeLock)
+            if (useForeground) {
+                ShellForegroundService.stop(appContext)
+            }
+        }
     },
 )
+
+/**
+ * Shell 执行期间保持 CPU 运行。
+ * 设备进深度睡眠后单调时钟停走, sleep 与 timeout 的计时会一起冻结,
+ * 而界面用墙钟计时, 看起来就是"超时了命令还在跑"。
+ */
+private fun acquireShellWakeLock(timeoutMillis: Long): PowerManager.WakeLock? = runCatching {
+    val powerManager = getKoin().get<Context>().getSystemService(Context.POWER_SERVICE) as PowerManager
+    powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "franhub:shell").apply {
+        setReferenceCounted(false)
+        // 多留 60 秒, 覆盖 timeout 收尾与应用层等待
+        acquire(timeoutMillis + 60_000L)
+    }
+}.getOrNull()
+
+private fun releaseShellWakeLock(wakeLock: PowerManager.WakeLock?) {
+    runCatching { if (wakeLock?.isHeld == true) wakeLock.release() }
+}
 
 private fun kotlinx.serialization.json.JsonObject.string(name: String): String? =
     this[name]?.jsonPrimitive?.contentOrNull

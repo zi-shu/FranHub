@@ -28,10 +28,14 @@ android {
 
     defaultConfig {
         applicationId = "zishu.wife.Franhub"
+        // 传 -PfranhubDev 时加 .dev 后缀, 与正式包共存安装
+        if (project.hasProperty("franhubDev")) {
+            applicationIdSuffix = ".dev"
+        }
         minSdk = 26
         targetSdk = 37
-        versionCode = 10
-        versionName = "v0.2.10"
+        versionCode = 13
+        versionName = "v0.2.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -95,8 +95,11 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
         System.err.println("[FranHubShell] waitFor 返回 finished=$finished elapsedMs=$waitedMs timeoutMs=$timeoutMillis")
         if (!finished) {
             val killBeginNanos = System.nanoTime()
+            System.err.println("[FranHubShell] 强杀前 pid=${pidOrNull()} isAlive=${isAlive()}")
             destroyForcibly()
-            System.err.println("[FranHubShell] destroyForcibly 耗时 ${(System.nanoTime() - killBeginNanos) / 1_000_000}ms")
+            System.err.println(
+                "[FranHubShell] 强杀后 耗时=${(System.nanoTime() - killBeginNanos) / 1_000_000}ms isAlive=${isAlive()}"
+            )
         }
         stdinWriter?.join(1_000)
         stdout.join(1_000)
@@ -114,7 +117,9 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
         )
     } catch (e: InterruptedException) {
         // 调用方线程被中断（如协程取消时的 runInterruptible），杀掉进程避免命令继续执行
+        System.err.println("[FranHubShell] 等待被中断 pid=${pidOrNull()} isAlive=${isAlive()}")
         destroyForcibly()
+        System.err.println("[FranHubShell] 中断后强杀 isAlive=${isAlive()}")
         // 进程被杀后 stdout/stderr 会关闭, 这里 join 回收两个采集线程, 避免每次取消泄漏一对线程
         stdinWriter?.join(1_000)
         stdout.join(1_000)
@@ -193,3 +198,8 @@ internal class StreamCollector(
 /** POSIX shell 单引号转义 */
 internal fun String.shellQuote(): String =
     "'" + replace("'", "'\"'\"'") + "'"
+
+/** Android 的 Process 没有公开 pid, 反射读 ProcessImpl.pid 用于诊断日志 */
+internal fun Process.pidOrNull(): Int? = runCatching {
+    javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(this)
+}.getOrNull()
