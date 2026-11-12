@@ -3,6 +3,9 @@ package me.rerere.rikkahub.ui.pages.backup.tabs
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -42,6 +46,9 @@ import me.rerere.rikkahub.data.backup.WorkspaceRestoreMode
 import me.rerere.rikkahub.data.backup.WorkspaceRestoreSelection
 import me.rerere.rikkahub.data.backup.WorkspaceSize
 import me.rerere.rikkahub.data.datastore.WebDavConfig
+import me.rerere.rikkahub.data.sync.FileRestoreMode
+import me.rerere.rikkahub.data.sync.MergeAction
+import me.rerere.rikkahub.data.sync.MergePreview
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.context.LocalToaster
@@ -79,12 +86,14 @@ fun ImportExportTab(
     val isWorkspaceImporting = running?.kind == BackupTaskKind.WORKSPACE_IMPORT ||
         running?.kind == BackupTaskKind.WORKSPACE_RESTORE
     val pendingRestore by vm.pendingWorkspaceRestore.collectAsStateWithLifecycle()
+    val pendingMerge by vm.pendingMergeRestore.collectAsStateWithLifecycle()
     val sizes by vm.workspaceSizesState.collectAsStateWithLifecycle()
     val sizesReady by vm.workspaceSizesReady.collectAsStateWithLifecycle()
     val rootfsGaps by vm.rootfsGaps.collectAsStateWithLifecycle()
     val rootfsInstallProgress by vm.rootfsInstallProgress.collectAsStateWithLifecycle()
     val rootfsInstallError by vm.rootfsInstallError.collectAsStateWithLifecycle()
     var showImportConfirmDialog by remember { mutableStateOf(false) }
+    var fileRestoreMode by remember { mutableStateOf(FileRestoreMode.REPLACE) }
     var showWorkspacePicker by remember { mutableStateOf(false) }
     var showExportConfirm by remember { mutableStateOf(false) }
     var exportTarget by remember { mutableStateOf(BackupTarget.CHAT) }
@@ -178,7 +187,7 @@ fun ImportExportTab(
     ) { uri ->
         uri?.let {
             when (importType) {
-                "local" -> vm.startChatImport(it)
+                "local" -> vm.startChatImport(it, fileRestoreMode)
                 "workspace" -> vm.startWorkspaceImport(it)
                 "chatbox" -> vm.startChatboxImport(it)
                 "cherry" -> vm.startCherryImport(it)
@@ -394,7 +403,22 @@ fun ImportExportTab(
         AlertDialog(
             onDismissRequest = { showImportConfirmDialog = false },
             title = { Text(stringResource(R.string.backup_page_local_backup_import)) },
-            text = { Text(stringResource(R.string.backup_page_import_overwrite_confirm)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.backup_page_import_overwrite_confirm))
+                    Text(stringResource(R.string.backup_page_file_restore_mode))
+                    RestoreModeRow(
+                        label = stringResource(R.string.backup_page_file_restore_replace),
+                        selected = fileRestoreMode == FileRestoreMode.REPLACE,
+                        onSelect = { fileRestoreMode = FileRestoreMode.REPLACE },
+                    )
+                    RestoreModeRow(
+                        label = stringResource(R.string.backup_page_file_restore_merge),
+                        selected = fileRestoreMode == FileRestoreMode.MERGE,
+                        onSelect = { fileRestoreMode = FileRestoreMode.MERGE },
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -476,6 +500,14 @@ fun ImportExportTab(
             manifest = pending.manifest,
             onDismiss = { vm.dismissPendingWorkspaceRestore() },
             onConfirm = { selection -> vm.startWorkspaceRestore(selection) },
+        )
+    }
+
+    pendingMerge?.let { pending ->
+        MergePreviewDialog(
+            preview = pending.preview,
+            onConfirm = { vm.confirmMergeRestore() },
+            onDismiss = { vm.cancelMergeRestore() },
         )
     }
 
@@ -742,4 +774,94 @@ private fun rootfsInstallText(progress: RootfsInstallProgress): String = when (p
         stringResource(R.string.backup_page_rootfs_extracting, progress.entriesExtracted)
 
     RootfsInstallStage.INSTALLED -> stringResource(R.string.backup_page_rootfs_installed)
+}
+
+/**
+ * 增量恢复的合并预览清单。列出条目的跳过、新增、改名导入与仅本地保留，
+ * 加上附件与记忆的统计。确认后发布暂存恢复并重启，取消则丢弃暂存目录。
+ */
+@Composable
+private fun MergePreviewDialog(
+    preview: MergePreview,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.backup_page_merge_preview_title)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    stringResource(R.string.backup_page_merge_preview_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                val entries = preview.entries
+                if (entries.isEmpty()) {
+                    Text(stringResource(R.string.backup_page_merge_no_entries))
+                } else {
+                    for (entry in entries) {
+                        val label = when (entry.action) {
+                            MergeAction.SKIP -> stringResource(R.string.backup_page_merge_skip)
+                            MergeAction.IMPORT -> stringResource(R.string.backup_page_merge_import)
+                            MergeAction.RENAME_IMPORT -> stringResource(R.string.backup_page_merge_rename)
+                            MergeAction.LOCAL_ONLY -> stringResource(R.string.backup_page_merge_local_only)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                if (entry.action == MergeAction.RENAME_IMPORT && entry.newName != null) {
+                                    "${entry.name} → ${entry.newName}"
+                                } else {
+                                    entry.name
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    stringResource(
+                        R.string.backup_page_merge_attachments,
+                        preview.attachments.skipped,
+                        preview.attachments.imported,
+                        preview.attachments.renamed,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    stringResource(
+                        R.string.backup_page_merge_memories,
+                        preview.memories.skipped,
+                        preview.memories.imported,
+                        preview.memories.renamed,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.backup_page_merge_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.backup_page_merge_cancel))
+            }
+        },
+    )
 }

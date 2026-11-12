@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import io.requery.android.database.sqlite.SQLiteDatabase
+import io.requery.android.database.sqlite.SQLiteDatabaseConfiguration
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -42,6 +45,9 @@ import java.time.format.DateTimeFormatter
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
+
+/** 文件恢复模式：全量替换或增量合并。 */
+enum class FileRestoreMode { REPLACE, MERGE }
 
 /** Shared archive format and restore lifecycle for local, WebDAV and S3 backups. */
 class BackupManager(
@@ -100,11 +106,14 @@ class BackupManager(
         includeDatabase: Boolean,
         includeFiles: Boolean,
         workspaces: WorkspaceRestoreSelection? = null,
-    ) =
+        mode: FileRestoreMode = FileRestoreMode.REPLACE,
+    ): File? =
         withContext(Dispatchers.IO) {
             restoreMutex.withLock {
                 val restore = pendingRestore(context)
                 val staging = restore.createStagingDirectory()
+                val mergeMode = mode == FileRestoreMode.MERGE
+                var suspended = false
                 try {
                     val payload = File(staging, "payload")
                     val stagedDatabase = File(payload, "database/${SQLiteConfiguration.DATABASE_NAME}")
@@ -149,8 +158,61 @@ class BackupManager(
                     }
                     require(restoredEntries > 0) { "No selected data found in the backup" }
                     require(!stagedWal.exists() || stagedDatabase.exists()) { "Backup WAL has no matching database" }
+
+                    // 增量合并：先算 settings 合并，拿到 id 映射，再做数据库与附件合并
+                    var mergedSettings: Settings? = null
+                    var mergePlan: List<MergePlanItem> = emptyList()
+                    var idMap: Map<String, String> = emptyMap()
+                    var attachments: AttachmentMergeStats = AttachmentMergeStats()
+                    var memories: MemoryMergeStats = MemoryMergeStats()
+                    var workspaceIds: Set<String>? = null
+
+                    val settingsFile = File(staging, "settings.json")
+                    val migratedSettings = if (settingsFile.exists()) {
+                        val migrated = SettingsJsonMigrator.migrate(settingsFile.readText())
+                        val settings = json.decodeFromString<Settings>(migrated)
+                        require(!settings.init) { "Backup contains uninitialized settings" }
+                        if (mergeMode) {
+                            val local = settingsStore.awaitLoaded()
+                            val result = ConfigMerge(json).mergeSettings(settings, local)
+                            mergedSettings = result.settings
+                            mergePlan = result.plan
+                            idMap = result.idMap
+                        }
+                        migrated
+                    } else {
+                        null
+                    }
+
                     if (stagedDatabase.exists()) {
                         DatabaseBackup.normalize(context, stagedDatabase)
+                        if (mergeMode) {
+                            val configuration = SQLiteConfiguration.configure(
+                                context,
+                                SQLiteDatabaseConfiguration(
+                                    stagedDatabase.absolutePath,
+                                    SQLiteDatabase.OPEN_READWRITE
+                                )
+                            )
+                            val localSnapshot = File(staging, "local_snapshot.db")
+                            DatabaseBackup.createSnapshot(
+                                database.openHelper.writableDatabase,
+                                localSnapshot,
+                            )
+                            try {
+                                SQLiteDatabase.openDatabase(configuration, null) {
+                                    error("Backup database is corrupt")
+                                }.use { db ->
+                                    DatabaseMerge.rewriteReferences(db, idMap, json)
+                                    memories = DatabaseMerge.mergeMemories(
+                                        db, localSnapshot, idMap, context,
+                                    )
+                                    workspaceIds = DatabaseMerge.existingWorkspaceIds(db)
+                                }
+                            } finally {
+                                localSnapshot.delete()
+                            }
+                        }
                         // Reject unsupported schemas before publishing; run supported old migrations on the copy.
                         val room = AppDatabaseFactory.create(context, stagedDatabase.absolutePath)
                         try {
@@ -161,21 +223,79 @@ class BackupManager(
                         DatabaseBackup.removeSidecars(stagedDatabase)
                     }
 
-                    val settingsFile = File(staging, "settings.json")
-                    if (settingsFile.exists()) {
-                        val migrated = SettingsJsonMigrator.migrate(settingsFile.readText())
-                        val settings = json.decodeFromString<Settings>(migrated)
-                        require(!settings.init) { "Backup contains uninitialized settings" }
-                        // Persist the migrated value once, including generated IDs, for restart/retry consistency.
-                        PendingRestore.writeDurably(settingsFile, json.encodeSettings(settings, json.launchCountOf(migrated)))
+                    if (mergeMode && includeFiles) {
+                        val payloadFiles = File(payload, "files")
+                        if (payloadFiles.isDirectory) {
+                            attachments = AttachmentMerge.apply(payloadFiles, context.filesDir)
+                        }
                     }
+
+                    if (settingsFile.exists()) {
+                        val finalSettings = mergedSettings?.let { settings ->
+                            // 助手引用的工作区可能在整库替换后不存在，校验并置空
+                            val validIds = workspaceIds
+                            if (validIds != null) {
+                                settings.copy(
+                                    assistants = settings.assistants.map { assistant ->
+                                        val ws = assistant.workspaceId
+                                        if (ws != null && ws.toString() !in validIds) {
+                                            assistant.copy(workspaceId = null)
+                                        } else {
+                                            assistant
+                                        }
+                                    },
+                                )
+                            } else {
+                                settings
+                            }
+                        } ?: json.decodeFromString<Settings>(migratedSettings!!)
+                        // Persist the migrated value once, including generated IDs, for restart/retry consistency.
+                        PendingRestore.writeDurably(
+                            settingsFile,
+                            json.encodeSettings(finalSettings, json.launchCountOf(migratedSettings!!)),
+                        )
+                    }
+
+                    if (mergeMode) {
+                        val preview = MergePreview(
+                            entries = mergePlan,
+                            attachments = attachments,
+                            memories = memories,
+                        )
+                        PendingRestore.writeDurably(
+                            File(staging, "merge_preview.json"),
+                            json.encodeToString(MergePreview.serializer(), preview),
+                        )
+                        PendingRestore.writeDurably(
+                            File(staging, "id_map.json"),
+                            json.encodeToString(idMap),
+                        )
+                        suspended = true
+                        return@withLock staging
+                    }
+
                     currentCoroutineContext().ensureActive()
                     restore.publish(staging)
+                    null
                 } finally {
-                    staging.deleteRecursively()
+                    if (!suspended) staging.deleteRecursively()
                 }
             }
         }
+
+    /** 挂起的增量恢复：用户确认预览后发布。 */
+    suspend fun publishMergeRestore(staging: File) = withContext(Dispatchers.IO) {
+        restoreMutex.withLock {
+            pendingRestore(context).publish(staging)
+        }
+    }
+
+    /** 取消挂起的增量恢复，删除暂存目录。 */
+    suspend fun cancelMergeRestore(staging: File) = withContext(Dispatchers.IO) {
+        restoreMutex.withLock {
+            WorkspaceBackup.deleteTree(staging)
+        }
+    }
 
     /**
      * 把工作区与 Linux 环境写进 [output]。

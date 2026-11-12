@@ -17,12 +17,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.backup.BackupPhase
 import me.rerere.rikkahub.data.backup.BackupProgress
 import me.rerere.rikkahub.data.backup.BackupTaskKind
 import me.rerere.rikkahub.data.backup.BackupTaskRunner
 import me.rerere.rikkahub.data.backup.BackupTaskState
+import me.rerere.rikkahub.data.backup.PendingMergeRestore
 import me.rerere.rikkahub.data.backup.PendingWorkspaceRestore
 import me.rerere.rikkahub.data.backup.WorkspaceBackup
 import me.rerere.rikkahub.data.backup.WorkspaceBackupManifest
@@ -44,6 +46,8 @@ import me.rerere.rikkahub.data.sync.webdav.WebDavBackupItem
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.data.sync.S3BackupItem
 import me.rerere.rikkahub.data.sync.BackupManager
+import me.rerere.rikkahub.data.sync.FileRestoreMode
+import me.rerere.rikkahub.data.sync.MergePreview
 import me.rerere.rikkahub.data.sync.S3Sync
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
@@ -344,6 +348,7 @@ class BackupVM(
     val backupJob: StateFlow<BackupTaskState> = runner.state
 
     val pendingWorkspaceRestore: StateFlow<PendingWorkspaceRestore?> = runner.pendingWorkspaceRestore
+    val pendingMergeRestore: StateFlow<PendingMergeRestore?> = runner.pendingMergeRestore
 
     /** 工作区体积，进入选择弹窗或导出确认前刷新。 */
     val workspaceSizesState = MutableStateFlow<Map<String, WorkspaceSize>>(emptyMap())
@@ -416,12 +421,52 @@ class BackupVM(
     private fun exportWriteFailed(): String = context.getString(R.string.backup_page_export_failed_write)
 
     /** 聊天记录包导入，结束需要重启。 */
-    fun startChatImport(uri: Uri) = launchTask(BackupTaskKind.CHAT_IMPORT, restartRequired = true) {
-        val temp = copyToCache(uri, "temp_restore")
-        try {
-            restoreFromLocalFile(temp)
-        } finally {
-            temp.delete()
+    fun startChatImport(uri: Uri, mode: FileRestoreMode = FileRestoreMode.REPLACE) =
+        launchTask(BackupTaskKind.CHAT_IMPORT, restartRequired = mode == FileRestoreMode.REPLACE) {
+            val temp = copyToCache(uri, "temp_restore")
+            try {
+                if (mode == FileRestoreMode.REPLACE) {
+                    restoreFromLocalFile(temp)
+                } else {
+                    stageMergeImport(temp)
+                }
+            } finally {
+                temp.delete()
+            }
+        }
+
+    /** 增量模式：算好合并计划后挂起，等用户确认预览清单。 */
+    private suspend fun stageMergeImport(file: File) {
+        val config = settings.value.webDavConfig.copy(items = localBackupItems.value)
+        val staging = backupManager.stageRestore(
+            archive = file,
+            includeDatabase = WebDavConfig.BackupItem.DATABASE in config.items,
+            includeFiles = WebDavConfig.BackupItem.FILES in config.items,
+            mode = FileRestoreMode.MERGE,
+        ) ?: return
+        val previewFile = File(staging, "merge_preview.json")
+        if (!previewFile.isFile) {
+            backupManager.cancelMergeRestore(staging)
+            error(context.getString(R.string.backup_page_merge_preview_missing))
+        }
+        val preview = Json.decodeFromString<MergePreview>(previewFile.readText())
+        runner.setPendingMergeRestore(PendingMergeRestore(staging, preview))
+    }
+
+    /** 用户确认预览清单：发布暂存的恢复，重启生效。 */
+    fun confirmMergeRestore() = launchTask(BackupTaskKind.CHAT_IMPORT, restartRequired = true) {
+        val pending = runner.takePendingMergeRestore()
+            ?: error(context.getString(R.string.backup_page_merge_nothing_pending))
+        backupManager.publishMergeRestore(pending.staging)
+    }
+
+    /** 用户放弃增量恢复：删除暂存目录。 */
+    fun cancelMergeRestore() {
+        val pending = runner.takePendingMergeRestore() ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                backupManager.cancelMergeRestore(pending.staging)
+            }
         }
     }
 

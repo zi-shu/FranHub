@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.sync.MergePreview
 import me.rerere.rikkahub.service.BackupForegroundService
 import java.util.concurrent.atomic.AtomicLong
 
@@ -86,6 +87,12 @@ class PendingWorkspaceRestore(
     val manifest: WorkspaceBackupManifest,
 )
 
+/** 已算好合并计划的暂存恢复，等用户确认预览清单后再发布。 */
+class PendingMergeRestore(
+    val staging: java.io.File,
+    val preview: MergePreview,
+)
+
 /**
  * 备份与恢复作业的执行者。
  *
@@ -108,6 +115,20 @@ class BackupTaskRunner(
     fun setPendingWorkspaceRestore(pending: PendingWorkspaceRestore) {
         _pendingWorkspaceRestore.value?.file?.delete()
         _pendingWorkspaceRestore.value = pending
+    }
+
+    // 待确认的增量恢复：stage 完成、合并计划已算好，等用户确认
+    private val _pendingMergeRestore = MutableStateFlow<PendingMergeRestore?>(null)
+    val pendingMergeRestore: StateFlow<PendingMergeRestore?> = _pendingMergeRestore.asStateFlow()
+
+    fun setPendingMergeRestore(pending: PendingMergeRestore) {
+        _pendingMergeRestore.value = pending
+    }
+
+    fun takePendingMergeRestore(): PendingMergeRestore? {
+        val pending = _pendingMergeRestore.value
+        _pendingMergeRestore.value = null
+        return pending
     }
 
     /** 用户确认恢复：取出待恢复包并清空槽位，文件交给作业处理，不删除。 */
