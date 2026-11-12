@@ -58,6 +58,7 @@ private val DENIED_TOOL_NAMES = setOf(
     "clipboard_tool",
     "get_screen_time",
     "text_to_speech",
+    "phone_use",
     "conversation_read",
     "conversation_search",
     "recent_chats",

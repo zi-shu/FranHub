@@ -8,6 +8,10 @@ import java.util.concurrent.TimeUnit
 interface WorkspaceShellRunner {
     fun execute(context: WorkspaceShellContext): WorkspaceCommandResult
 
+    /** 在后台启动命令并立即返回, [id] 用来命名日志文件; [WorkspaceShellContext.timeoutMillis] 不起作用 */
+    fun startBackground(context: WorkspaceShellContext, id: String): WorkspaceBackgroundCommand =
+        throw UnsupportedOperationException("Background commands are not supported by this shell")
+
     /** 交互式终端的启动参数, 不支持交互式终端时返回 null */
     fun terminalLaunch(context: WorkspaceTerminalContext): WorkspaceTerminalLaunch? = null
 }
@@ -58,25 +62,12 @@ class HostShellRunner : WorkspaceShellRunner {
 // 单个流保留的最大字符数, 防止命令疯狂输出导致 OOM 或撑爆 LLM 上下文
 const val MAX_OUTPUT_CHARS = 128 * 1024
 
-fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): WorkspaceCommandResult {
-    val beginNanos = System.nanoTime()
-    // 调试看门狗: 超时预算外再等 5 秒仍未返回, 打印全部线程调用栈, 用于定位阻塞位置
-    val watchdog = Thread {
-        try {
-            Thread.sleep(timeoutMillis + 5_000L)
-            val elapsed = (System.nanoTime() - beginNanos) / 1_000_000
-            System.err.println("[FranHubShell] watchdog: 仍未返回 elapsedMs=$elapsed timeoutMs=$timeoutMillis")
-            Thread.getAllStackTraces().entries.take(80).forEach { (thread, stack) ->
-                System.err.println("[FranHubShell] watchdog thread=${thread.name} state=${thread.state}")
-                stack.forEach { frame -> System.err.println("[FranHubShell] watchdog   at $frame") }
-            }
-        } catch (_: InterruptedException) {
-            // 正常返回时被中断, 说明没有阻塞, 不打印
-        }
-    }.apply {
-        isDaemon = true
-        start()
-    }
+/** 等待命令结束并收集输出; 超时或线程被中断时用 [terminate] 结束进程 */
+fun Process.readResult(
+    timeoutMillis: Long,
+    stdin: ByteArray? = null,
+    terminate: Process.() -> Unit = { destroyForcibly() },
+): WorkspaceCommandResult {
     val stdout = StreamCollector(inputStream)
     val stderr = StreamCollector(errorStream)
     val stdinWriter = stdin?.let { bytes -> StreamWriter(outputStream, bytes) }
@@ -91,25 +82,14 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
     }
     try {
         val finished = waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
-        val waitedMs = (System.nanoTime() - beginNanos) / 1_000_000
-        System.err.println("[FranHubShell] waitFor 返回 finished=$finished elapsedMs=$waitedMs timeoutMs=$timeoutMillis")
         if (!finished) {
-            val killBeginNanos = System.nanoTime()
-            System.err.println("[FranHubShell] 强杀前 pid=${pidOrNull()} isAlive=${isAlive()}")
-            destroyForcibly()
-            System.err.println(
-                "[FranHubShell] 强杀后 耗时=${(System.nanoTime() - killBeginNanos) / 1_000_000}ms isAlive=${isAlive()}"
-            )
+            terminate()
         }
         stdinWriter?.join(1_000)
         stdout.join(1_000)
         stderr.join(1_000)
-        val exitCode = if (finished) exitValue() else -1
-        System.err.println(
-            "[FranHubShell] 返回 exit=$exitCode timedOut=${!finished} totalMs=${(System.nanoTime() - beginNanos) / 1_000_000}"
-        )
         return WorkspaceCommandResult(
-            exitCode = exitCode,
+            exitCode = if (finished) exitValue() else -1,
             stdout = stdout.text(),
             stderr = stderr.text(),
             timedOut = !finished,
@@ -117,16 +97,12 @@ fun Process.readResult(timeoutMillis: Long, stdin: ByteArray? = null): Workspace
         )
     } catch (e: InterruptedException) {
         // 调用方线程被中断（如协程取消时的 runInterruptible），杀掉进程避免命令继续执行
-        System.err.println("[FranHubShell] 等待被中断 pid=${pidOrNull()} isAlive=${isAlive()}")
-        destroyForcibly()
-        System.err.println("[FranHubShell] 中断后强杀 isAlive=${isAlive()}")
+        terminate()
         // 进程被杀后 stdout/stderr 会关闭, 这里 join 回收两个采集线程, 避免每次取消泄漏一对线程
         stdinWriter?.join(1_000)
         stdout.join(1_000)
         stderr.join(1_000)
         throw e
-    } finally {
-        watchdog.interrupt()
     }
 }
 
@@ -198,8 +174,3 @@ internal class StreamCollector(
 /** POSIX shell 单引号转义 */
 internal fun String.shellQuote(): String =
     "'" + replace("'", "'\"'\"'") + "'"
-
-/** Android 的 Process 没有公开 pid, 反射读 ProcessImpl.pid 用于诊断日志 */
-internal fun Process.pidOrNull(): Int? = runCatching {
-    javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(this)
-}.getOrNull()

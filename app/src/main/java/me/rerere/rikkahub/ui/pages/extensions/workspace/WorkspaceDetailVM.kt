@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import me.rerere.rikkahub.data.ai.subagent.SubagentConfig
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.service.BackgroundShellManager
 import me.rerere.workspace.RootfsInstallProgress
 import me.rerere.workspace.RootfsInstallStage
 import me.rerere.workspace.WorkspaceCommandResult
@@ -29,7 +30,6 @@ import me.rerere.workspace.WorkspaceLayout
 import me.rerere.workspace.WorkspaceStorageArea
 import java.io.File
 import java.io.InputStream
-import java.io.OutputStream
 
 private const val TAG = "WorkspaceDetailVM"
 
@@ -37,6 +37,7 @@ class WorkspaceDetailVM(
     private val id: String,
     private val repository: WorkspaceRepository,
     private val terminalSessionManager: WorkspaceTerminalSessionManager,
+    private val backgroundShellManager: BackgroundShellManager,
 ) : ViewModel() {
     private val _state = MutableStateFlow(WorkspaceDetailState())
     val state = _state.asStateFlow()
@@ -252,9 +253,12 @@ class WorkspaceDetailVM(
         }
     }
 
-    fun exportFile(entry: WorkspaceFileEntry, outputStream: OutputStream) {
+    fun exportFile(entry: WorkspaceFileEntry, uri: Uri, resolver: ContentResolver) {
         viewModelScope.launch {
             runCatching {
+                // 部分 ROM 的 SAF 返回的 Uri 并没有真正创建文件, 打开时会抛 FileNotFoundException
+                val outputStream = withContext(Dispatchers.IO) { resolver.openOutputStream(uri) }
+                    ?: error("无法打开目标文件")
                 repository.exportFile(
                     id = id,
                     area = state.value.area,
@@ -333,6 +337,7 @@ class WorkspaceDetailVM(
             _installProgress.value = RootfsInstallProgress(stage = RootfsInstallStage.DOWNLOADING)
             try {
                 terminalSessionManager.closeWorkspace(workspace.root)
+                backgroundShellManager.killWorkspace(workspace.id)
                 repository.installRootfs(workspace.id, url) { progress ->
                     _installProgress.value = progress
                 }
