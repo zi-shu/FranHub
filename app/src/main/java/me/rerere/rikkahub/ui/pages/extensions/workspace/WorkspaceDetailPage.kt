@@ -115,6 +115,7 @@ import me.rerere.rikkahub.ui.components.ai.ExtensionEmptyState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.CardGroupIcon
+import me.rerere.rikkahub.ui.components.ui.CardGroupValue
 import me.rerere.rikkahub.ui.components.ui.ConnectedChoiceButtons
 import me.rerere.rikkahub.ui.components.ui.ConnectedChoiceLabel
 import me.rerere.rikkahub.ui.components.ui.ImagePreviewDialog
@@ -138,6 +139,14 @@ import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 import java.io.File
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import me.rerere.ai.provider.ModelType
+import me.rerere.rikkahub.data.ai.subagent.SubagentConfig
+import me.rerere.rikkahub.ui.context.LocalSettings
+import kotlin.math.roundToInt
 
 private enum class WorkspaceDetailTab(
     override val icon: ImageVector,
@@ -256,6 +265,7 @@ fun WorkspaceDetailPage(id: String) {
                         installProgress = installProgress,
                         onInstallRootfs = { showInstallDialog = true },
                         onToolApprovalChange = vm::setToolApproval,
+                        onSubagentConfigChange = vm::setSubagentConfig,
                         onShellCompatibilityModeChange = vm::setShellCompatibilityMode,
                         onEditSsh = { navController.navigate(Screen.WorkspaceSshEditor(id)) },
                     )
@@ -457,6 +467,7 @@ private fun WorkspaceBasicPage(
     installProgress: RootfsInstallProgress?,
     onInstallRootfs: () -> Unit,
     onToolApprovalChange: (String, Boolean) -> Unit,
+    onSubagentConfigChange: (SubagentConfig) -> Unit,
     onShellCompatibilityModeChange: (Boolean) -> Unit,
     onEditSsh: () -> Unit,
 ) {
@@ -545,6 +556,13 @@ private fun WorkspaceBasicPage(
             WorkspaceToolApprovalCard(
                 workspace = workspace,
                 onToolApprovalChange = onToolApprovalChange,
+            )
+        }
+
+        item {
+            WorkspaceSubagentCard(
+                workspace = workspace,
+                onConfigChange = onSubagentConfigChange,
             )
         }
     }
@@ -650,6 +668,138 @@ private fun WorkspaceToolApprovalCard(
                 leadingContent = { CardGroupIcon(icon) },
                 headlineContent = { Text(label) },
             )
+        }
+    }
+}
+
+/**
+ * 子智能体设置。配置存在工作区上, 与主代理的审批开关分开。
+ * 关闭时不出派发工具, 子代理不会跑起来。
+ */
+@Composable
+private fun WorkspaceSubagentCard(
+    workspace: WorkspaceEntity?,
+    onConfigChange: (SubagentConfig) -> Unit,
+) {
+    val config = workspace?.subagentConfig()?.normalized() ?: SubagentConfig.DEFAULT
+    val settings = LocalSettings.current
+    var showModelPicker by remember { mutableStateOf(false) }
+    val models = remember(settings.providers) {
+        settings.providers.flatMap { provider -> provider.models }.filter { it.type == ModelType.CHAT }
+    }
+    val modelLabel = config.modelId
+        ?.let { id -> models.firstOrNull { it.id == id }?.displayName }
+        ?: stringResource(R.string.subagent_setting_model_follow)
+
+    CardGroup(
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.subagent_setting_title))
+                Text(
+                    text = stringResource(R.string.subagent_setting_enabled_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    ) {
+        switchItem(
+            checked = config.enabled,
+            onCheckedChange = { onConfigChange(config.copy(enabled = it)) },
+            enabled = workspace != null,
+            headlineContent = { Text(stringResource(R.string.subagent_setting_enabled)) },
+        )
+
+        if (config.enabled) {
+            formItem(
+                headlineContent = { Text(stringResource(R.string.subagent_setting_concurrency)) },
+                supportingContent = { Text(stringResource(R.string.subagent_setting_concurrency_desc)) },
+                trailingContent = { CardGroupValue(config.maxConcurrency.toString()) },
+            ) {
+                Slider(
+                    value = config.maxConcurrency.toFloat(),
+                    onValueChange = { onConfigChange(config.copy(maxConcurrency = it.roundToInt())) },
+                    valueRange = SubagentConfig.MIN_CONCURRENCY.toFloat()..SubagentConfig.MAX_CONCURRENCY.toFloat(),
+                    steps = SubagentConfig.MAX_CONCURRENCY - SubagentConfig.MIN_CONCURRENCY - 1,
+                )
+            }
+
+            formItem(
+                headlineContent = { Text(stringResource(R.string.subagent_setting_timeout)) },
+                trailingContent = { CardGroupValue("${config.timeoutMs / 60_000} min") },
+            ) {
+                Slider(
+                    value = (config.timeoutMs / 60_000L).toFloat(),
+                    onValueChange = {
+                        onConfigChange(
+                            config.copy(timeoutMs = it.roundToInt().coerceAtLeast(1) * 60_000L)
+                        )
+                    },
+                    valueRange = 1f..60f,
+                    steps = 58,
+                )
+            }
+
+            item(
+                onClick = { showModelPicker = true },
+                headlineContent = { Text(stringResource(R.string.subagent_setting_model)) },
+                trailingContent = { CardGroupValue(modelLabel) },
+            )
+
+            switchItem(
+                checked = config.allowRead,
+                onCheckedChange = { onConfigChange(config.copy(allowRead = it)) },
+                headlineContent = { Text(stringResource(R.string.subagent_setting_read)) },
+            )
+            switchItem(
+                checked = config.allowWrite,
+                onCheckedChange = { onConfigChange(config.copy(allowWrite = it)) },
+                headlineContent = { Text(stringResource(R.string.subagent_setting_write)) },
+            )
+            switchItem(
+                checked = config.allowEdit,
+                onCheckedChange = { onConfigChange(config.copy(allowEdit = it)) },
+                headlineContent = { Text(stringResource(R.string.subagent_setting_edit)) },
+            )
+            switchItem(
+                checked = config.allowShell,
+                onCheckedChange = { onConfigChange(config.copy(allowShell = it)) },
+                headlineContent = { Text(stringResource(R.string.subagent_setting_shell)) },
+            )
+        }
+    }
+
+    if (showModelPicker) {
+        ModalBottomSheet(onDismissRequest = { showModelPicker = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.subagent_setting_model),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.subagent_setting_model_follow)) },
+                    modifier = Modifier.clickable {
+                        onConfigChange(config.copy(modelId = null))
+                        showModelPicker = false
+                    },
+                )
+                models.forEach { model ->
+                    ListItem(
+                        headlineContent = { Text(model.displayName) },
+                        supportingContent = { Text(model.modelId) },
+                        modifier = Modifier.clickable {
+                            onConfigChange(config.copy(modelId = model.id))
+                            showModelPicker = false
+                        },
+                    )
+                }
+            }
         }
     }
 }

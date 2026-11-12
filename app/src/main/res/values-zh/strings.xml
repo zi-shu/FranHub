@@ -1859,4 +1859,22 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_delete_failed_path">出错位置：%1$s</string>
   <string name="workspace_delete_failed_detail">详情：%1$s</string>
   <string name="restore_applying">正在应用备份恢复，请稍候</string>
+  <string name="subagent_running_title">子智能体运行中</string>
+  <string name="subagent_tool_calls">%1$d 次工具调用</string>
+  <string name="subagent_cancel">取消</string>
+  <string name="subagent_setting_title">子智能体</string>
+  <string name="subagent_setting_enabled">启用子智能体</string>
+  <string name="subagent_setting_enabled_desc">允许主代理把子任务派发给子代理执行</string>
+  <string name="subagent_setting_concurrency">并行数</string>
+  <string name="subagent_setting_concurrency_desc">同时运行的子代理上限</string>
+  <string name="subagent_setting_timeout">单次超时（秒）</string>
+  <string name="subagent_setting_model">子代理模型</string>
+  <string name="subagent_setting_model_follow">跟随主对话</string>
+  <string name="subagent_setting_tools">子代理工具权限</string>
+  <string name="subagent_setting_read">读取文件</string>
+  <string name="subagent_setting_write">写入文件</string>
+  <string name="subagent_setting_edit">编辑文件</string>
+  <string name="subagent_setting_shell">执行 shell 命令</string>
+  <string name="subagent_running_bar">%1$d 个子代理运行中</string>
+  <string name="subagent_view">查看</string>
 </resources>

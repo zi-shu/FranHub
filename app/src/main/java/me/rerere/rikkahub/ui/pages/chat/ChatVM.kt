@@ -31,6 +31,8 @@ import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.ai.subagent.SubagentManager
+import me.rerere.rikkahub.data.ai.subagent.SubagentRun
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
@@ -62,8 +64,25 @@ class ChatVM(
     private val analytics: FirebaseAnalytics,
     private val filesManager: FilesManager,
     private val favoriteRepository: FavoriteRepository,
+    private val subagentManager: SubagentManager,
 ) : ViewModel() {
     private val _conversationId: Uuid = Uuid.parse(id)
+
+    /**
+     * 本会话运行中的子代理。
+     * 子代理跑在独立协程里, 不挂在会话 job 上, 所以单独用一份流给界面。
+     */
+    val subagentRuns: StateFlow<List<SubagentRun>> = subagentManager.runs
+        .map { runs ->
+            runs.values
+                .filter { it.parentConversationId == _conversationId }
+                .sortedBy { it.startedAt }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun cancelSubagent(taskId: Uuid) {
+        viewModelScope.launch { subagentManager.cancel(taskId) }
+    }
     val conversation: StateFlow<Conversation> = chatService.getConversationFlow(_conversationId)
     var chatListInitialized by mutableStateOf(false) // 聊天列表是否已经滚动到底部
 

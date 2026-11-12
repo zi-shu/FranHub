@@ -43,6 +43,7 @@ import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -142,6 +143,8 @@ fun ChatInput(
     onStartVoiceMode: (() -> Unit)? = null,
     voiceState: VoiceSessionState = VoiceSessionState(),
     onStopVoiceMode: () -> Unit = {},
+    /** 卡片顶部段, 有子代理运行时由调用方传入; 为空则不显示这一段 */
+    subagentHeader: (@Composable () -> Unit)? = null,
 ) {
     val toaster = LocalToaster.current
     val containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -227,13 +230,6 @@ fun ChatInput(
                 .padding(bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            MessageQueuePanel(
-                state = messageQueue,
-                onRemove = onRemoveQueuedMessage,
-                onBeginEdit = onBeginEditQueuedMessage,
-                onFinishEdit = onFinishEditQueuedMessage,
-                onResume = onResumeMessageQueue,
-            )
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -249,6 +245,25 @@ fun ChatInput(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                 color = if (settings.displaySetting.enableBlurEffect) Color.Transparent else containerColor,
             ) {
+                Column {
+                AnimatedVisibility(visible = messageQueue.messages.isNotEmpty()) {
+                    Column {
+                        MessageQueuePanel(
+                            state = messageQueue,
+                            onRemove = onRemoveQueuedMessage,
+                            onBeginEdit = onBeginEditQueuedMessage,
+                            onFinishEdit = onFinishEditQueuedMessage,
+                            onResume = onResumeMessageQueue,
+                        )
+                        SectionDivider()
+                    }
+                }
+                AnimatedVisibility(visible = subagentHeader != null) {
+                    Column {
+                        subagentHeader?.invoke()
+                        SectionDivider()
+                    }
+                }
                 Column(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -358,6 +373,7 @@ fun ChatInput(
                             )
                         }
                     }
+                }
                 }
             }
 
@@ -636,6 +652,11 @@ private fun TextInputRow(
             }
         }
     }
+}
+
+@Composable
+private fun SectionDivider() {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }
 
 @Composable

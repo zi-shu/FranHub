@@ -1857,4 +1857,22 @@
   <string name="workspace_delete_failed_path">Failed at: %1$s</string>
   <string name="workspace_delete_failed_detail">Detail: %1$s</string>
   <string name="restore_applying">Applying backup restore, please wait</string>
+  <string name="subagent_running_title">Subagents running</string>
+  <string name="subagent_tool_calls">%1$d tool calls</string>
+  <string name="subagent_cancel">Cancel</string>
+  <string name="subagent_setting_title">Subagents</string>
+  <string name="subagent_setting_enabled">Enable subagents</string>
+  <string name="subagent_setting_enabled_desc">Allow the main agent to dispatch subtasks to child agents</string>
+  <string name="subagent_setting_concurrency">Concurrency</string>
+  <string name="subagent_setting_concurrency_desc">Maximum number of child agents running at the same time</string>
+  <string name="subagent_setting_timeout">Timeout (seconds)</string>
+  <string name="subagent_setting_model">Subagent model</string>
+  <string name="subagent_setting_model_follow">Follow main conversation</string>
+  <string name="subagent_setting_tools">Child tool permissions</string>
+  <string name="subagent_setting_read">Read files</string>
+  <string name="subagent_setting_write">Write files</string>
+  <string name="subagent_setting_edit">Edit files</string>
+  <string name="subagent_setting_shell">Run shell commands</string>
+  <string name="subagent_running_bar">%1$d subagents running</string>
+  <string name="subagent_view">View</string>
 </resources>

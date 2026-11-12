@@ -7,7 +7,10 @@ import me.rerere.ai.core.Tool
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.subagent.SubagentManager
+import me.rerere.rikkahub.data.ai.subagent.SubagentRunner
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.files.FileFolders
@@ -18,6 +21,7 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.repository.memoryId
 import me.rerere.rikkahub.data.skills.SkillManager
 import me.rerere.workspace.WorkspaceShellStatus
+import org.koin.java.KoinJavaComponent.getKoin
 import java.io.File
 import kotlin.uuid.Uuid
 
@@ -50,8 +54,15 @@ class ChatToolFactory(
         assistant: Assistant,
         model: Model,
         workspaceCwd: String? = null,
+        /** 主会话传自己的会话 ID; 子代理传 null, 于是拿不到派发工具, 递归在此切断 */
+        conversationId: Uuid? = null,
     ): List<Tool> {
         val workspaceTools = createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), workspaceCwd)
+        val subagentTools = if (conversationId != null) {
+            createSubagentToolsIfEnabled(settings, assistant, model, workspaceCwd, conversationId)
+        } else {
+            emptyList()
+        }
         val tools = buildList {
             if (assistant.enableMemory) {
                 addAll(buildMemoryTools(memoryRepository, assistant.memoryId))
@@ -64,6 +75,7 @@ class ChatToolFactory(
                 addAll(createConversationTools(conversationRepository, assistant.id))
             }
             addAll(workspaceTools)
+            addAll(subagentTools)
             if (assistant.enabledSkills.isNotEmpty()) {
                 addAll(
                     createSkillTools(
@@ -129,6 +141,36 @@ class ChatToolFactory(
                 }
             )
         ) + output.filter { it !is UIMessagePart.Text }
+    }
+
+    /**
+     * 子智能体配置存在工作区上。未选工作区、未开启、或工作区已被删除时不注入工具。
+     * 工具执行体需要 ChatRequestFactory 与 ChatToolFactory 自己, 构造期拿不到(会成环),
+     * 所以到运行时再从 Koin 取。
+     */
+    private suspend fun createSubagentToolsIfEnabled(
+        settings: Settings,
+        assistant: Assistant,
+        model: Model,
+        workspaceCwd: String?,
+        conversationId: Uuid,
+    ): List<Tool> {
+        val workspaceId = assistant.workspaceId?.toString() ?: return emptyList()
+        val workspace = workspaceRepository.getById(workspaceId) ?: return emptyList()
+        val config = workspace.subagentConfig().normalized()
+        if (!config.enabled) return emptyList()
+        val koin = getKoin()
+        return createSubagentTools(
+            config = config,
+            settings = settings,
+            assistant = assistant,
+            model = model,
+            workspaceCwd = workspaceCwd,
+            conversationId = conversationId,
+            manager = koin.get<SubagentManager>(),
+            runner = koin.get<SubagentRunner>(),
+            scope = koin.get<AppScope>(),
+        )
     }
 
     private suspend fun createWorkspaceToolsIfReady(workspaceId: String?, cwd: String?): List<Tool> {

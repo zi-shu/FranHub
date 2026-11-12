@@ -342,6 +342,10 @@ private fun ChatPageContent(
             bottomBar = {
                 val messageQueue by vm.messageQueue.collectAsStateWithLifecycle()
                 val voiceState by vm.voiceSession.state.collectAsStateWithLifecycle()
+                val subagentRuns by vm.subagentRuns.collectAsStateWithLifecycle()
+                val subagentHeader: (@Composable () -> Unit)? =
+                    if (subagentRuns.isEmpty()) null
+                    else ({ SubagentRunningBar(runs = subagentRuns, onCancel = vm::cancelSubagent) })
                 ChatInput(
                     onStartVoiceMode = onStartVoiceMode,
                     voiceState = voiceState,
@@ -399,6 +403,7 @@ private fun ChatPageContent(
                     onMoreClick = {
                         showFilesSheet = true
                     },
+                    subagentHeader = subagentHeader,
                 )
             },
             containerColor = Color.Transparent,

@@ -9,6 +9,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import me.rerere.rikkahub.data.ai.subagent.SubagentConfig
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.dao.WorkspaceDAO
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
@@ -176,6 +177,17 @@ class WorkspaceRepository(
         dao.upsert(
             workspace.copy(
                 toolApprovals = JsonInstant.encodeToString(overrides),
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+        return true
+    }
+
+    suspend fun setSubagentConfig(id: String, config: SubagentConfig): Boolean {
+        val workspace = dao.getById(id) ?: return false
+        dao.upsert(
+            workspace.copy(
+                subagentConfigJson = JsonInstant.encodeToString(config.normalized()),
                 updatedAt = System.currentTimeMillis(),
             )
         )

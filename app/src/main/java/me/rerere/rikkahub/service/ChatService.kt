@@ -44,6 +44,7 @@ import me.rerere.rikkahub.data.ai.ConversationMetaGenerator
 import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
 import me.rerere.rikkahub.data.ai.TranslationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
+import me.rerere.rikkahub.data.ai.subagent.SubagentManager
 import me.rerere.rikkahub.data.ai.prompts.buildCompressPrompt
 import me.rerere.rikkahub.data.ai.tools.InvalidMcpServerNamesException
 import me.rerere.rikkahub.data.ai.tools.shouldUseExternalWebSearch
@@ -114,6 +115,7 @@ class ChatService(
     val mcpManager: McpManager,
     private val filesManager: FilesManager,
     private val folderRepository: FolderRepository,
+    private val subagentManager: SubagentManager,
 ) {
     /** 一轮生成的结果 */
     private sealed interface TurnResult {
@@ -1241,6 +1243,8 @@ class ChatService(
 
     // 停止当前会话生成任务（不清理会话缓存）
     suspend fun stopGeneration(conversationId: Uuid) {
+        // 子代理是独立协程, 不随会话 job 一起停。先置取消信号, 否则点停止后子代理还在跑
+        subagentManager.cancelAll(conversationId)
         val session = sessionManager.get(conversationId) ?: return
         val jobs = synchronized(session) {
             session.messageQueue.pause()

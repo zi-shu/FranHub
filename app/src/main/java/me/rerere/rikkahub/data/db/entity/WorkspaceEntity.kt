@@ -4,6 +4,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import me.rerere.rikkahub.data.ai.subagent.SubagentConfig
 import me.rerere.rikkahub.data.model.SshWorkspaceSettings
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.workspace.Workspace
@@ -45,6 +46,9 @@ data class WorkspaceEntity(
     // SSH 工作区的连接配置 (SshWorkspaceSettings 的 JSON, 凭据为 Keystore 密文), 本地工作区为 null
     @ColumnInfo("ssh_config")
     val sshConfig: String? = null,
+    // 子智能体配置 (SubagentConfig 的 JSON), 见 data/ai/subagent/SubagentConfig.kt
+    @ColumnInfo("subagent_config", defaultValue = "{}")
+    val subagentConfigJson: String = "{}",
 ) {
     fun isSsh(): Boolean = type == WorkspaceType.SSH.name
 
@@ -69,6 +73,12 @@ data class WorkspaceEntity(
     fun toolApprovalOverrides(): Map<String, Boolean> = runCatching {
         JsonInstant.decodeFromString<Map<String, Boolean>>(toolApprovals)
     }.getOrDefault(emptyMap())
+
+    /** 子智能体配置; 空串或旧数据解不出来时用默认值(默认关闭) */
+    fun subagentConfig(): SubagentConfig = runCatching {
+        if (subagentConfigJson.isBlank()) SubagentConfig.DEFAULT
+        else JsonInstant.decodeFromString<SubagentConfig>(subagentConfigJson)
+    }.getOrDefault(SubagentConfig.DEFAULT)
 
     fun toWorkspace(): Workspace = Workspace(
         id = id,

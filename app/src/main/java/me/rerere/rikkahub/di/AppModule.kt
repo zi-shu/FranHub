@@ -6,6 +6,8 @@ import com.google.firebase.crashlytics.crashlytics
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.ChatRequestFactory
+import me.rerere.rikkahub.data.ai.subagent.SubagentManager
+import me.rerere.rikkahub.data.ai.subagent.SubagentRunner
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
@@ -100,6 +102,19 @@ val appModule = module {
         )
     }
 
+    // 子代理注册表与执行体。执行体依赖两个工厂, 但工具侧只在运行时取它, 所以不会成环
+    single { SubagentManager() }
+
+    single {
+        SubagentRunner(
+            context = get(),
+            toolFactory = get(),
+            requestFactory = get(),
+            manager = get(),
+            workspaceRepository = get(),
+        )
+    }
+
     single {
         ChatToolFactory(
             context = get(),
@@ -137,7 +152,8 @@ val appModule = module {
             metaGenerator = get(),
             mcpManager = get(),
             filesManager = get(),
-            folderRepository = get()
+            folderRepository = get(),
+            subagentManager = get()
         )
     }
 

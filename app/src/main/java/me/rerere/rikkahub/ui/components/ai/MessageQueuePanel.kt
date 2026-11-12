@@ -45,14 +45,14 @@ internal fun MessageQueuePanel(
 ) {
     var editing by remember { mutableStateOf<QueuedMessage?>(null) }
     if (state.messages.isNotEmpty()) {
-        Surface(
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceContainer,
+        // 作为输入框卡片的顶部段渲染, 不再自带背景与形状
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
                 .testTag("chat_message_queue"),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+            Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = stringResource(

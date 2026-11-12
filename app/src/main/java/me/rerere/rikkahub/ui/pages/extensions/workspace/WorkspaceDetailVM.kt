@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import me.rerere.rikkahub.data.ai.subagent.SubagentConfig
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.RootfsInstallProgress
@@ -313,6 +314,14 @@ class WorkspaceDetailVM(
         viewModelScope.launch {
             val workspace = state.value.workspace ?: return@launch
             repository.setToolApproval(workspace.id, toolName, needsApproval)
+            loadWorkspace()
+        }
+    }
+
+    fun setSubagentConfig(config: SubagentConfig) {
+        viewModelScope.launch {
+            val workspace = state.value.workspace ?: return@launch
+            repository.setSubagentConfig(workspace.id, config)
             loadWorkspace()
         }
     }
