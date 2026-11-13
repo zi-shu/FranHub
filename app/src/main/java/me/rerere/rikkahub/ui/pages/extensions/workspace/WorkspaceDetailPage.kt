@@ -435,12 +435,34 @@ fun WorkspaceDetailPage(id: String) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    if (state.deleteFailureCanUseRoot) {
+                        Text(
+                            text = stringResource(R.string.workspace_delete_root_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = vm::dismissDeleteFailure) {
-                    Text(stringResource(R.string.common_confirm))
+                if (state.deleteFailureCanUseRoot) {
+                    TextButton(onClick = vm::confirmRootDelete) {
+                        Text(stringResource(R.string.workspace_delete_use_root))
+                    }
+                } else {
+                    TextButton(onClick = vm::dismissDeleteFailure) {
+                        Text(stringResource(R.string.common_confirm))
+                    }
                 }
+            },
+            dismissButton = if (state.deleteFailureCanUseRoot) {
+                {
+                    TextButton(onClick = vm::dismissDeleteFailure) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
+                }
+            } else {
+                null
             },
         )
     }
@@ -453,6 +475,7 @@ private fun deleteFailureText(failure: WorkspaceDeleteFailure): String = when (f
     WorkspaceDeleteFailure.NOT_FOUND -> stringResource(R.string.workspace_delete_failed_not_found)
     WorkspaceDeleteFailure.NEED_RECURSIVE -> stringResource(R.string.workspace_delete_failed_need_recursive)
     WorkspaceDeleteFailure.PERMISSION_DENIED -> stringResource(R.string.workspace_delete_failed_permission)
+    WorkspaceDeleteFailure.ROOT_UNSUPPORTED -> stringResource(R.string.workspace_delete_failed_root_unsupported)
     WorkspaceDeleteFailure.READ_ONLY -> stringResource(R.string.workspace_delete_failed_read_only)
     WorkspaceDeleteFailure.NOT_EMPTY -> stringResource(R.string.workspace_delete_failed_not_empty)
     WorkspaceDeleteFailure.BUSY -> stringResource(R.string.workspace_delete_failed_busy)

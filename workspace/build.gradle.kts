@@ -7,18 +7,19 @@ android {
     namespace = "me.rerere.workspace"
 
     defaultConfig {
-        externalNativeBuild {
-            cmake {
-                cppFlags += ""
-            }
-        }
+        // [临时261113] externalNativeBuild 已禁用: 新环境无 x86-64 运行库, cmake 无法执行
+        // externalNativeBuild {
+        //     cmake {
+        //         cppFlags += ""
+        //     }
+        // }
     }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
+    // externalNativeBuild {
+    //     cmake {
+    //         path = file("src/main/cpp/CMakeLists.txt")
+    //         version = "3.22.1"
+    //     }
+    // }
 }
 
 dependencies {

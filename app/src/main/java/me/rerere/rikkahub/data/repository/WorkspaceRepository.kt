@@ -353,6 +353,7 @@ class WorkspaceRepository(
         area: WorkspaceStorageArea,
         path: String,
         recursive: Boolean,
+        forceRoot: Boolean = false,
     ): WorkspaceDeleteResult = withContext(Dispatchers.IO) {
         val workspace = dao.getById(id)
             ?: return@withContext WorkspaceDeleteResult.failure(
@@ -360,7 +361,14 @@ class WorkspaceRepository(
                 path,
                 "工作区记录不存在",
             )
-        backendOf(workspace).deleteFile(area, path, recursive)
+        if (forceRoot && !workspace.capabilities().rootfs) {
+            return@withContext WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.ROOT_UNSUPPORTED,
+                path,
+                "该工作区不支持 root 删除",
+            )
+        }
+        backendOf(workspace).deleteFile(area, path, recursive, forceRoot)
     }
 
     suspend fun executeCommand(

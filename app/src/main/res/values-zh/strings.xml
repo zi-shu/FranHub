@@ -298,6 +298,7 @@
   <string name="chat_page_conversation_system_prompt_hint">覆盖此对话的助手系统提示</string>
   <string name="chat_page_conversation_system_prompt_save">保存</string>
   <string name="chat_page_delete">删除</string>
+  <string name="chat_drafts_section_title">草稿</string>
   <string name="chat_page_dismiss_error">关闭错误</string>
   <string name="chat_page_edit_nickname">编辑昵称</string>
   <string name="chat_page_edit_title">编辑标题</string>
@@ -1858,6 +1859,9 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_delete_failed_not_found">文件已经不存在</string>
   <string name="workspace_delete_failed_need_recursive">目录删除参数缺失</string>
   <string name="workspace_delete_failed_permission">没有写权限，常见原因是父目录只读</string>
+  <string name="workspace_delete_failed_root_unsupported">该工作区不支持 root 删除</string>
+  <string name="workspace_delete_root_hint">普通删除没有写权限。要用 root 权限强制删除吗？</string>
+  <string name="workspace_delete_use_root">用 root 删除</string>
   <string name="workspace_delete_failed_read_only">文件系统只读</string>
   <string name="workspace_delete_failed_not_empty">目录里还有删不掉的项</string>
   <string name="workspace_delete_failed_busy">文件正被占用</string>

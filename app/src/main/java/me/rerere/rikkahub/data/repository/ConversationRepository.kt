@@ -375,6 +375,9 @@ class ConversationRepository(
     suspend fun searchMessagesOfAssistants(keyword: String, assistantIds: Set<Uuid>) =
         messageFtsManager.search(keyword, MessageSearchSort.RELEVANCE, assistantIds.map { it.toString() })
 
+    /** 已落库会话的 id 集合，Room Flow，增删自动刷新。用于把草稿会话和已落库会话区分开。 */
+    fun getAllIdsFlow(): Flow<Set<String>> = conversationDAO.getAllIdsFlow().map { it.toSet() }
+
     suspend fun rebuildAllIndexes(onProgress: (current: Int, total: Int) -> Unit = { _, _ -> }) {
         messageFtsManager.deleteAll()
         val allIds = conversationDAO.getAllIds()

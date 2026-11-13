@@ -14,6 +14,9 @@ enum class WorkspaceDeleteFailure {
     /** 没有权限（EACCES / EPERM），常见是父目录没有写位。 */
     PERMISSION_DENIED,
 
+    /** 工作区没有 root 权限可借（如 SSH 工作区），无法用 root 删除。 */
+    ROOT_UNSUPPORTED,
+
     /** 文件系统只读（EROFS）。 */
     READ_ONLY,
 

@@ -39,7 +39,13 @@ interface WorkspaceBackend {
 
     fun exportFile(area: WorkspaceStorageArea, path: String, outputStream: OutputStream)
 
-    fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): WorkspaceDeleteResult
+    /** 删除文件或目录。[forceRoot] 为 true 时借 rootfs shell 以 root 身份删除, 用于普通删除因权限失败的情况。 */
+    fun deleteFile(
+        area: WorkspaceStorageArea,
+        path: String,
+        recursive: Boolean,
+        forceRoot: Boolean = false,
+    ): WorkspaceDeleteResult
 
     fun absoluteFileSize(path: String): Long
 

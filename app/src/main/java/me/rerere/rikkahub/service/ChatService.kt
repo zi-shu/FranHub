@@ -46,6 +46,7 @@ import me.rerere.rikkahub.data.ai.ChatTurnContext
 import me.rerere.rikkahub.data.ai.ConversationMetaGenerator
 import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
 import me.rerere.rikkahub.data.ai.TranslationHandler
+import me.rerere.rikkahub.data.chat.ChatDraftStore
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.subagent.SubagentManager
 import me.rerere.rikkahub.data.ai.prompts.buildCompressPrompt
@@ -122,6 +123,7 @@ class ChatService(
     private val folderRepository: FolderRepository,
     private val subagentManager: SubagentManager,
     private val backgroundShellManager: BackgroundShellManager,
+    private val draftStore: ChatDraftStore,
 ) {
     /** 一次 agent 运行发给模型的消息，和回复要写进的节点 */
     private class ReplyTarget(val history: List<UIMessage>, val nodeId: Uuid) {
@@ -1366,6 +1368,8 @@ class ChatService(
             previous?.let { filesManager.deleteChatFiles(it.files) }
         }
         sessionManager.removeIfIdle(session)
+        // 输入框草稿随会话一起删
+        draftStore.clear(conversationId)
         // 后台命令随会话一起终止, 撤销删除也不会恢复; 终止要等宽限期, 不阻塞删除
         appScope.launch { backgroundShellManager.killConversation(conversationId) }
     }

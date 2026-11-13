@@ -13,6 +13,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -33,6 +35,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.ai.subagent.SubagentManager
 import me.rerere.rikkahub.data.ai.subagent.SubagentRun
+import me.rerere.rikkahub.data.chat.ChatDraftStore
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
@@ -69,6 +72,7 @@ class ChatVM(
     private val favoriteRepository: FavoriteRepository,
     private val subagentManager: SubagentManager,
     private val backgroundShellManager: BackgroundShellManager,
+    private val draftStore: ChatDraftStore,
 ) : ViewModel() {
     private val _conversationId: Uuid = Uuid.parse(id)
 
@@ -132,6 +136,16 @@ class ChatVM(
     override fun onCleared() {
         voiceSession.stop()
         super.onCleared()
+        // 输入框草稿落盘，切换会话后回来还能恢复
+        runCatching {
+            runBlocking(Dispatchers.IO) {
+                draftStore.save(
+                    conversationId = _conversationId,
+                    assistantId = conversation.value.assistantId,
+                    text = inputState.textContent.text.toString(),
+                )
+            }
+        }
         // 移除对话引用
         chatService.removeConversationReference(_conversationId)
     }
@@ -225,6 +239,15 @@ class ChatVM(
         chatService.updateDraftConversationFolder(_conversationId, folderId)
     }
 
+    /** 进入会话时恢复上次留下的输入草稿；输入框已有内容或没有草稿时不动作。 */
+    suspend fun restoreDraft() {
+        if (!inputState.isEmpty()) return
+        val text = draftStore.load(_conversationId) ?: return
+        if (text.isNotBlank()) {
+            inputState.setMessageText(text)
+        }
+    }
+
     // 设置聊天模型
     fun setChatModel(model: Model) {
         viewModelScope.launch {
@@ -267,6 +290,8 @@ class ChatVM(
         analytics.logEvent("ai_send_message", null)
 
         chatService.sendMessage(_conversationId, content, answer)
+        // 发送后输入框已清空，草稿同步清除
+        viewModelScope.launch { draftStore.clear(_conversationId) }
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {

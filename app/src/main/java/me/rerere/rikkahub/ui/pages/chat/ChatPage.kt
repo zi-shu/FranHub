@@ -169,7 +169,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
 
     val inputState = vm.inputState
 
-    // 初始化输入状态（处理传入的 files 和 text 参数）
+    // 初始化输入状态：外部分享传入的文件与文本优先，没有外部内容时恢复上次留下的草稿
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -190,10 +190,11 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
             }
             inputState.messageContent = parts
         }
-        text?.base64Decode()?.let { decodedText ->
-            if (decodedText.isNotEmpty()) {
-                inputState.setMessageText(decodedText)
-            }
+        val externalText = text?.base64Decode().orEmpty()
+        if (externalText.isNotEmpty()) {
+            inputState.setMessageText(externalText)
+        } else if (files.isEmpty()) {
+            vm.restoreDraft()
         }
     }
 

@@ -196,7 +196,7 @@ class WorkspaceDetailVM(
         }
     }
 
-    fun delete(entry: WorkspaceFileEntry) {
+    fun delete(entry: WorkspaceFileEntry, forceRoot: Boolean = false) {
         viewModelScope.launch {
             runCatching {
                 repository.deleteFile(
@@ -204,17 +204,24 @@ class WorkspaceDetailVM(
                     area = state.value.area,
                     path = entry.path,
                     recursive = entry.isDirectory,
+                    forceRoot = forceRoot,
                 )
             }.onSuccess { result ->
                 if (result.deleted) {
                     _state.update {
-                        it.copy(deleteFailure = null, deleteFailurePath = null, deleteFailureDetail = null)
+                        it.copy(
+                            deleteFailure = null,
+                            deleteFailurePath = null,
+                            deleteFailureDetail = null,
+                            deleteFailureEntry = null,
+                            deleteFailureCanUseRoot = false,
+                        )
                     }
                     refresh()
                 } else {
                     Log.w(
                         TAG,
-                        "delete rejected: area=${state.value.area} path=${entry.path} " +
+                        "delete rejected: area=${state.value.area} path=${entry.path} forceRoot=$forceRoot " +
                             "reason=${result.failure} failedAt=${result.failedPath} detail=${result.detail}",
                     )
                     _state.update {
@@ -222,6 +229,11 @@ class WorkspaceDetailVM(
                             deleteFailure = result.failure,
                             deleteFailurePath = result.failedPath ?: entry.path,
                             deleteFailureDetail = result.detail,
+                            deleteFailureEntry = entry,
+                            // 只有普通删除因权限失败才给 root 选项; root 也失败时不再循环提示。
+                            deleteFailureCanUseRoot = !forceRoot &&
+                                result.failure == WorkspaceDeleteFailure.PERMISSION_DENIED &&
+                                state.value.workspace?.capabilities()?.rootfs == true,
                         )
                     }
                 }
@@ -231,8 +243,23 @@ class WorkspaceDetailVM(
         }
     }
 
+    /** 删除失败弹窗里确认用 root 重删: 关掉失败弹窗, 用同一目标再删一次。 */
+    fun confirmRootDelete() {
+        val entry = state.value.deleteFailureEntry ?: return
+        dismissDeleteFailure()
+        delete(entry, forceRoot = true)
+    }
+
     fun dismissDeleteFailure() {
-        _state.update { it.copy(deleteFailure = null, deleteFailurePath = null, deleteFailureDetail = null) }
+        _state.update {
+            it.copy(
+                deleteFailure = null,
+                deleteFailurePath = null,
+                deleteFailureDetail = null,
+                deleteFailureEntry = null,
+                deleteFailureCanUseRoot = false,
+            )
+        }
     }
 
     fun importFile(inputStream: InputStream, fileName: String) {
@@ -427,6 +454,10 @@ data class WorkspaceDetailState(
     val deleteFailure: WorkspaceDeleteFailure? = null,
     val deleteFailurePath: String? = null,
     val deleteFailureDetail: String? = null,
+    /** 失败弹窗里保留的目标，确认用 root 重删时继续用它。 */
+    val deleteFailureEntry: WorkspaceFileEntry? = null,
+    /** 失败弹窗是否显示「用 root 删除」按钮。 */
+    val deleteFailureCanUseRoot: Boolean = false,
 )
 
 data class WorkspaceTerminalState(

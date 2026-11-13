@@ -1,8 +1,10 @@
 package me.rerere.rikkahub.di
 
+import android.content.Context
 import com.google.firebase.Firebase
 import com.google.firebase.analytics.analytics
 import com.google.firebase.crashlytics.crashlytics
+import java.io.File
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.ChatRequestFactory
@@ -10,6 +12,7 @@ import me.rerere.rikkahub.data.ai.subagent.SubagentManager
 import me.rerere.rikkahub.data.ai.subagent.SubagentRunner
 import me.rerere.rikkahub.data.ai.tools.ChatToolFactory
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
+import me.rerere.rikkahub.data.chat.ChatDraftStore
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.phoneuse.PhoneUseManager
 import me.rerere.rikkahub.service.BackgroundShellManager
@@ -37,6 +40,10 @@ val appModule = module {
 
     single {
         PhoneUseManager()
+    }
+
+    single {
+        ChatDraftStore(File(get<Context>().filesDir, "chat_drafts"))
     }
 
     single {
@@ -168,6 +175,7 @@ val appModule = module {
             mcpManager = get(),
             filesManager = get(),
             folderRepository = get(),
+            draftStore = get(),
             subagentManager = get(),
             backgroundShellManager = get(),
         )

@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
+import me.rerere.rikkahub.data.chat.ChatDraftStore
 import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
@@ -41,11 +42,12 @@ import kotlin.uuid.Uuid
 class ChatDrawerVM(
     private val context: Application,
     private val settingsStore: SettingsStore,
-    conversationRepo: ConversationRepository,
+    private val conversationRepo: ConversationRepository,
     private val folderRepo: FolderRepository,
     private val chatService: ChatService,
     private val memoryConsolidationScheduler: MemoryConsolidationScheduler,
     private val savedStateHandle: SavedStateHandle,
+    private val draftStore: ChatDraftStore,
 ) : ViewModel() {
 
     private val assistantIdFlow = settingsStore.settingsFlow
@@ -73,6 +75,28 @@ class ChatDrawerVM(
             if (memoryId == null) flowOf(false) else memoryConsolidationScheduler.statusOf(memoryId).map { it.running }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    // 未发送过消息的新会话留下的输入草稿，显示在抽屉列表顶部；会话落库后自动移出
+    val draftConversations: StateFlow<List<DraftConversationItem>> = combine(
+        draftStore.drafts,
+        assistantIdFlow,
+        conversationRepo.getAllIdsFlow(),
+    ) { drafts, assistantId, persistedIds ->
+        drafts.entries
+            .asSequence()
+            .filter { it.key !in persistedIds && it.value.assistantId == assistantId.toString() }
+            .sortedByDescending { it.value.updatedAt }
+            .mapNotNull { entry ->
+                runCatching { Uuid.parse(entry.key) }.getOrNull()?.let { id ->
+                    DraftConversationItem(
+                        conversationId = id,
+                        text = entry.value.text,
+                        updatedAt = entry.value.updatedAt,
+                    )
+                }
+            }
+            .toList()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val conversations: Flow<PagingData<ConversationListItem>> =
         combine(assistantIdFlow, _selectedFolderId, sortOrderFlow) { assistantId, folderId, sortOrder ->
@@ -177,6 +201,10 @@ class ChatDrawerVM(
             // 经 ChatService 移动：活跃会话会先同步内存态，避免后续整对象保存覆盖 folder_id
             chatService.moveConversationToFolder(conversationId, folderId)
         }
+    }
+
+    fun deleteDraft(conversationId: Uuid) {
+        viewModelScope.launch { draftStore.clear(conversationId) }
     }
 
     private fun Conversation.sortDate(sortOrder: ConversationSortOrder): LocalDate {

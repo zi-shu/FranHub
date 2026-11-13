@@ -46,8 +46,15 @@ class LocalWorkspaceBackend(
     override fun exportFile(area: WorkspaceStorageArea, path: String, outputStream: OutputStream) =
         manager.exportFile(root, path, area, outputStream)
 
-    override fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): WorkspaceDeleteResult =
-        manager.deleteFile(root, path, recursive, area)
+    override fun deleteFile(
+        area: WorkspaceStorageArea,
+        path: String,
+        recursive: Boolean,
+        forceRoot: Boolean,
+    ): WorkspaceDeleteResult {
+        if (forceRoot) return manager.rootDeleteFile(root, path, area)
+        return manager.deleteFile(root, path, recursive, area)
+    }
 
     override fun absoluteFileSize(path: String): Long {
         manager.ensureWorkspace(root)

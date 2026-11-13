@@ -105,7 +105,19 @@ class SshWorkspaceBackend(
         withSftp(area, retry = false) { sftp -> sftp.export(file, path, outputStream) }
     }
 
-    override fun deleteFile(area: WorkspaceStorageArea, path: String, recursive: Boolean): WorkspaceDeleteResult {
+    override fun deleteFile(
+        area: WorkspaceStorageArea,
+        path: String,
+        recursive: Boolean,
+        forceRoot: Boolean,
+    ): WorkspaceDeleteResult {
+        if (forceRoot) {
+            return WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.ROOT_UNSUPPORTED,
+                path,
+                "SSH 工作区没有 root 权限可借",
+            )
+        }
         if (path.isBlank() || path == ".") {
             return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, "拒绝删除工作区根目录")
         }

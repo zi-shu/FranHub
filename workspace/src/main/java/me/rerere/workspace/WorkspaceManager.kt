@@ -185,6 +185,98 @@ class WorkspaceManager(
     ): WorkspaceDeleteResult =
         fileSystem.delete(areaDir(root, area), path, recursive)
 
+    /**
+     * 借 Rootfs shell 以 root 身份删除文件或目录, 用于普通删除因权限失败的情况。
+     *
+     * 不在宿主机上用 File API 删: App 进程没有 root, 那正是普通删除失败的原因。
+     * 路径做两重处理: canonical 解析只用于越界检查, 拼给 shell 的是词法路径,
+     * 保证删符号链接时只删链接本身, 不会把链接目标(如 /usr/bin/X11 -> .)展开成目录删掉。
+     * Rootfs 里的挂载点不提供此能力: shell 看到的是挂载的真实内容, 删除会波及宿主机源目录。
+     */
+    fun rootDeleteFile(
+        root: String,
+        path: String,
+        area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+    ): WorkspaceDeleteResult {
+        if (path.isBlank() || path == ".") {
+            return WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.INVALID_PATH,
+                path,
+                "拒绝删除工作区根目录",
+            )
+        }
+        // 越界检查: 与普通删除同一套 canonical 解析, 异常即拒绝。
+        try {
+            fileSystem.resolve(areaDir(root, area), path)
+        } catch (e: IllegalArgumentException) {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, e.message)
+        }
+        // 词法路径: 逐段处理 . 与 .., 不解析符号链接。
+        val lexical = try {
+            lexicalResolve(path)
+        } catch (e: IllegalArgumentException) {
+            return WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.INVALID_PATH, path, e.message)
+        }
+        // 归一化后为空(如路径 "/"、"a/.."), 继续拼 shell 会落到根目录, 拒绝。
+        if (lexical.isEmpty()) {
+            return WorkspaceDeleteResult.failure(
+                WorkspaceDeleteFailure.INVALID_PATH,
+                path,
+                "拒绝删除工作区根目录",
+            )
+        }
+        val rootfsPath = when (area) {
+            WorkspaceStorageArea.FILES -> "$ROOTFS_WORKSPACE_DIR/$lexical"
+            WorkspaceStorageArea.LINUX -> "/$lexical"
+        }
+        // LINUX 区里挂载点(含 /workspace)下的内容是宿主机真实数据, root 删除会越区波及, 拒绝。
+        if (area == WorkspaceStorageArea.LINUX) {
+            val protectedTargets = sortedBindMounts.map { it.target.trimEnd('/') } +
+                KERNEL_FS_MOUNTS + ROOTFS_WORKSPACE_DIR
+            protectedTargets.firstOrNull { target ->
+                rootfsPath == target || rootfsPath.startsWith("$target/")
+            }?.let { target ->
+                return WorkspaceDeleteResult.failure(
+                    WorkspaceDeleteFailure.PERMISSION_DENIED,
+                    path,
+                    "$target 是挂载目录, 不支持 root 删除",
+                )
+            }
+        }
+        val result = executeCommand(
+            root = root,
+            command = "rm -rf -- ${rootfsPath.shellQuote()}",
+            cwd = "",
+            timeoutMillis = ROOT_DELETE_TIMEOUT_MS,
+            stdin = null,
+        )
+        return if (result.exitCode == 0) {
+            WorkspaceDeleteResult.success()
+        } else {
+            val detail = result.stderr.ifBlank { result.stdout }.trim()
+                .ifBlank { "rm 退出码 ${result.exitCode}" }
+            WorkspaceDeleteResult.failure(WorkspaceDeleteFailure.IO, path, detail)
+        }
+    }
+
+    /** 词法归一化: 处理 . 与 .., 不解析符号链接; 越过根目录时抛 IllegalArgumentException。 */
+    private fun lexicalResolve(path: String): String {
+        val normalized = path.replace('\\', '/').trim().trimStart('/').ifBlank { "." }
+        require(!normalized.contains('\u0000')) { "Path contains invalid character" }
+        val stack = ArrayDeque<String>()
+        normalized.split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> {
+                    if (stack.isEmpty()) throw IllegalArgumentException("Path escapes workspace root: $path")
+                    stack.removeLast()
+                }
+                else -> stack.addLast(part)
+            }
+        }
+        return stack.joinToString("/")
+    }
+
     fun moveFile(root: String, source: String, target: String, overwrite: Boolean = false): WorkspaceFileEntry =
         fileSystem.move(filesDir(root), source, target, overwrite)
 
@@ -295,6 +387,8 @@ class WorkspaceManager(
         private const val LINUX_DIR = "linux"
         private const val TEMP_DIR = "tmp"
         const val DEFAULT_COMMAND_TIMEOUT_MS = 30_000L
+        /** root 删除允许的最长执行时间; 大目录递归删除比普通命令慢。 */
+        const val ROOT_DELETE_TIMEOUT_MS = 600_000L
 
         /** Rootfs 内工作区文件区的挂载点 */
         const val ROOTFS_WORKSPACE_DIR = "/workspace"

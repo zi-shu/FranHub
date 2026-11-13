@@ -298,6 +298,7 @@
   <string name="chat_page_conversation_system_prompt_hint">Override the assistant\'s system prompt for this conversation</string>
   <string name="chat_page_conversation_system_prompt_save">Save</string>
   <string name="chat_page_delete">Delete</string>
+  <string name="chat_drafts_section_title">Drafts</string>
   <string name="chat_page_dismiss_error">Dismiss error</string>
   <string name="chat_page_edit_nickname">Edit Nickname</string>
   <string name="chat_page_edit_title">Edit title</string>
@@ -1856,6 +1857,9 @@
   <string name="workspace_delete_failed_not_found">The file no longer exists</string>
   <string name="workspace_delete_failed_need_recursive">Missing recursive flag for a directory</string>
   <string name="workspace_delete_failed_permission">No write permission, usually the parent directory is read-only</string>
+  <string name="workspace_delete_failed_root_unsupported">Root deletion is not supported for this workspace</string>
+  <string name="workspace_delete_root_hint">Ordinary delete failed due to permissions. Delete with root instead?</string>
+  <string name="workspace_delete_use_root">Delete with root</string>
   <string name="workspace_delete_failed_read_only">File system is read-only</string>
   <string name="workspace_delete_failed_not_empty">Directory still has items that cannot be deleted</string>
   <string name="workspace_delete_failed_busy">File is in use</string>
