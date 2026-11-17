@@ -53,7 +53,7 @@ class LocalWorkspaceBackend(
         recursive: Boolean,
         forceRoot: Boolean,
     ): WorkspaceDeleteResult {
-        if (forceRoot) return manager.rootDeleteFile(root, path, area)
+        if (forceRoot) return manager.rootDeleteFile(root, path, area, extraMounts)
         return manager.deleteFile(root, path, recursive, area)
     }
 

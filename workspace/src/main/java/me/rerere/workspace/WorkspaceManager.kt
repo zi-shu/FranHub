@@ -230,6 +230,7 @@ class WorkspaceManager(
         root: String,
         path: String,
         area: WorkspaceStorageArea = WorkspaceStorageArea.FILES,
+        extraMounts: List<WorkspaceBindMount> = emptyList(),
     ): WorkspaceDeleteResult {
         if (path.isBlank() || path == ".") {
             return WorkspaceDeleteResult.failure(
@@ -264,7 +265,7 @@ class WorkspaceManager(
         }
         // LINUX 区里挂载点(含 /workspace)下的内容是宿主机真实数据, root 删除会越区波及, 拒绝。
         if (area == WorkspaceStorageArea.LINUX) {
-            val protectedTargets = sortedBindMounts.map { it.target.trimEnd('/') } +
+            val protectedTargets = mountsOf(extraMounts).map { it.target.trimEnd('/') } +
                 KERNEL_FS_MOUNTS + ROOTFS_WORKSPACE_DIR
             protectedTargets.firstOrNull { target ->
                 rootfsPath == target || rootfsPath.startsWith("$target/")
