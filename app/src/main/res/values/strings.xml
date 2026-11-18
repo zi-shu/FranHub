@@ -175,6 +175,8 @@
   <string name="backup_page_export_estimate">Workspace files %1$s, Linux environment %2$s (before compression)</string>
   <string name="backup_page_restore_workspaces_title">Restore workspaces</string>
   <string name="backup_page_restore_mode">Restore mode</string>
+  <string name="backup_page_restore_to_workspace">Restore into local workspace \'%1$s\'</string>
+  <string name="backup_page_restore_new_workspace">Create new workspace \'%1$s\'</string>
   <string name="backup_page_restore_replace">Replace (keeps a rollback copy)</string>
   <string name="backup_page_restore_merge">Merge (keeps files not in the backup, no rollback)</string>
   <string name="backup_page_workspace_section">Workspaces and Linux environment</string>

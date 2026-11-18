@@ -23,8 +23,10 @@ import me.rerere.rikkahub.data.backup.BackupProgress
 import me.rerere.rikkahub.data.backup.WorkspaceBackup
 import me.rerere.rikkahub.data.backup.WorkspaceBackupManifest
 import me.rerere.rikkahub.data.backup.WorkspaceEntryInfo
+import me.rerere.rikkahub.data.backup.WorkspaceRestoreMapping
 import me.rerere.rikkahub.data.backup.WorkspaceRestoreSelection
 import me.rerere.rikkahub.data.backup.WorkspaceSelection
+import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.migration.SettingsJsonMigrator
@@ -315,31 +317,42 @@ class BackupManager(
         WorkspaceBackup.finishArchive(archive)
     }
 
-    /** 工作区包恢复：只解工作区条目，不碰数据库、设置与附件。 */
-    suspend fun stageWorkspaceRestore(archive: File, workspaces: WorkspaceRestoreSelection) =
-        withContext(Dispatchers.IO) {
-            if (WorkspaceBackup.isTarArchive(archive)) {
-                stageWorkspaceRestoreFromTar(archive, workspaces)
-            } else {
-                // 0.2.0 及更早版本用 zip 容器，保留读取路径
-                stageRestore(
-                    archive = archive,
-                    includeDatabase = false,
-                    includeFiles = false,
-                    workspaces = workspaces,
-                )
-            }
+    /**
+     * 工作区包恢复：只解工作区条目，不碰数据库、设置与附件。
+     *
+     * 返回包内 root 到本地 root 的映射，界面用同一份结果显示去向与检测 rootfs 缺口。
+     */
+    suspend fun stageWorkspaceRestore(
+        archive: File,
+        workspaces: WorkspaceRestoreSelection,
+    ): Map<String, String> = withContext(Dispatchers.IO) {
+        if (WorkspaceBackup.isTarArchive(archive)) {
+            stageWorkspaceRestoreFromTar(archive, workspaces)
+        } else {
+            // 0.2.0 及更早版本用 zip 容器，保留读取路径。
+            // 该路径实际到不了这里：导入阶段读清单用 tar 读取器，zip 包必报「备份包无效」。
+            stageRestore(
+                archive = archive,
+                includeDatabase = false,
+                includeFiles = false,
+                workspaces = workspaces,
+            )
+            emptyMap()
         }
+    }
 
     /**
      * tar 包恢复：把选中的 `workspaces/<root>/{files,linux}/...` 解到暂存目录。
      *
      * 归档顺序读，未选中的条目只跳过数据区，不解包。
+     *
+     * 解包完成后先把包内 root 映射到本地 root（同名工作区），再发布暂存目录。
+     * 启动期 apply 只认暂存目录里的目录名，映射必须在发布前完成。
      */
     private suspend fun stageWorkspaceRestoreFromTar(
         archive: File,
         workspaces: WorkspaceRestoreSelection,
-    ) = restoreMutex.withLock {
+    ): Map<String, String> = restoreMutex.withLock {
         val restore = pendingRestore(context)
         val staging = restore.createStagingDirectory()
         try {
@@ -356,15 +369,71 @@ class BackupManager(
                 runCatching { input.close() }
             }
             require(restoredEntries > 0) { "No selected data found in the backup" }
+            val manifest = WorkspaceBackup.readManifestFromArchive(archive)
+                ?: error("No selected data found in the backup")
+            val mapping = remapStagedRoots(staging, manifest, workspaces)
             WorkspaceBackup.writeOptions(
                 File(staging, WorkspaceBackup.WORKSPACES_DIR),
                 workspaces.mode,
             )
             currentCoroutineContext().ensureActive()
             restore.publish(staging)
+            mapping
         } finally {
             WorkspaceBackup.deleteTree(staging)
         }
+    }
+
+    /**
+     * 把暂存目录里包内 root 换成映射后的本地 root，并给新建工作区补数据库记录。
+     *
+     * 数据库记录必须在发布前写入。发布后应用重启，apply 在数据库打开前跑完。
+     * 若记录晚于发布写入，恢复落地后仍没人认领，孤儿目录问题原样复现。
+     * 改名前若目标目录已存在则报错：暂存目录全新，同名只可能来自异常的映射规则。
+     */
+    private suspend fun remapStagedRoots(
+        staging: File,
+        manifest: WorkspaceBackupManifest,
+        selection: WorkspaceRestoreSelection,
+    ): Map<String, String> {
+        val selectedRoots = selection.filesRoots + selection.linuxRoots
+        val localWorkspaces = database.workspaceDao().getAll()
+        val targets = WorkspaceRestoreMapping.resolve(
+            manifestWorkspaces = manifest.workspaces,
+            selectedRoots = selectedRoots,
+            localWorkspaces = localWorkspaces,
+        )
+        val stagedWorkspaces = File(staging, WorkspaceBackup.WORKSPACES_DIR)
+        val mapping = mutableMapOf<String, String>()
+        for (target in targets) {
+            val stagedRoot = File(stagedWorkspaces, target.backupRoot)
+            if (!stagedRoot.isDirectory) continue
+            if (target.localRoot != target.backupRoot) {
+                val renamed = File(stagedWorkspaces, target.localRoot)
+                require(!renamed.exists()) {
+                    "Restore target conflicts with another staged workspace: ${target.localRoot}"
+                }
+                Files.move(stagedRoot.toPath(), renamed.toPath())
+            }
+            if (target.isNew) {
+                val now = System.currentTimeMillis()
+                database.workspaceDao().upsert(
+                    WorkspaceEntity(
+                        id = target.localRoot,
+                        name = target.name,
+                        root = target.localRoot,
+                        createdAt = now,
+                        updatedAt = now,
+                    )
+                )
+                val base = File(context.filesDir, "${WorkspaceBackup.WORKSPACES_DIR}/${target.localRoot}")
+                File(base, "files").mkdirs()
+                File(base, "linux").mkdirs()
+                File(base, "tmp").mkdirs()
+            }
+            mapping[target.backupRoot] = target.localRoot
+        }
+        return mapping
     }
 
     /** 归档条目是否属于用户勾选的工作区与项目。 */

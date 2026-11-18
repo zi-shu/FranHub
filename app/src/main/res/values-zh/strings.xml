@@ -175,6 +175,8 @@
   <string name="backup_page_export_estimate">工作区文件 %1$s，Linux 环境 %2$s（压缩前估算）</string>
   <string name="backup_page_restore_workspaces_title">恢复工作区</string>
   <string name="backup_page_restore_mode">恢复方式</string>
+  <string name="backup_page_restore_to_workspace">将恢复到本机工作区『%1$s』</string>
+  <string name="backup_page_restore_new_workspace">将新建工作区『%1$s』</string>
   <string name="backup_page_restore_replace">全盘替换（旧目录保留，可回滚）</string>
   <string name="backup_page_restore_merge">增量合并（保留备份包里没有的文件，不回滚）</string>
   <string name="backup_page_workspace_section">工作区与 Linux 环境</string>

@@ -225,9 +225,10 @@ class BackupVM(
         }
     }
 
-    suspend fun restoreWorkspaceBackup(file: File, selection: WorkspaceRestoreSelection) {
-        backupManager.stageWorkspaceRestore(file, selection)
-    }
+    suspend fun restoreWorkspaceBackup(
+        file: File,
+        selection: WorkspaceRestoreSelection,
+    ): Map<String, String> = backupManager.stageWorkspaceRestore(file, selection)
 
     suspend fun restoreFromChatBox(file: File): ChatboxRestoreResult = withContext(Dispatchers.IO) {
         val currentSettings = settings.value
@@ -521,19 +522,24 @@ class BackupVM(
     /**
      * 恢复后仍缺 Linux 环境的工作区。
      *
-     * 只要该工作区的 linux 被勾选、且包内确实带了 linux，恢复就会补上，不算缺口。
-     * 其余情况看本机当前是否已有 Rootfs。
+     * [mapping] 是包内 root 到本地 root 的对照表。恢复按映射落位，
+     * 缺口检测必须用映射后的本地 root 比对，用包内 root 永远对不上。
      */
     private fun rootfsGapsAfterRestore(
         pending: PendingWorkspaceRestore,
         selection: WorkspaceRestoreSelection,
+        mapping: Map<String, String>,
     ): List<WorkspaceEntity> {
-        val restoredRoots = selection.filesRoots + selection.linuxRoots
+        val restoredLocalRoots = (selection.filesRoots + selection.linuxRoots)
+            .mapNotNull { mapping[it] }
+            .toSet()
         return workspaces.value
-            .filter { it.root in restoredRoots }
+            .filter { it.root in restoredLocalRoots }
             .filterNot { workspace ->
-                val willRestoreLinux = workspace.root in selection.linuxRoots &&
-                    pending.manifest.workspaces.any { it.root == workspace.root && it.hasLinux }
+                val linuxEntry = pending.manifest.workspaces.firstOrNull {
+                    it.root in selection.linuxRoots && mapping[it.root] == workspace.root
+                }
+                val willRestoreLinux = linuxEntry != null && linuxEntry.hasLinux
                 willRestoreLinux || workspaceManager.hasRootfs(workspace.root)
             }
     }
@@ -544,8 +550,8 @@ class BackupVM(
         val pending = runner.takePendingWorkspaceRestore() ?: return
         launchTask(BackupTaskKind.WORKSPACE_RESTORE, restartRequired = true) {
             try {
-                restoreWorkspaceBackup(pending.file, selection)
-                _rootfsGaps.value = rootfsGapsAfterRestore(pending, selection)
+                val mapping = restoreWorkspaceBackup(pending.file, selection)
+                _rootfsGaps.value = rootfsGapsAfterRestore(pending, selection, mapping)
             } finally {
                 pending.file.delete()
             }

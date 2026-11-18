@@ -58,6 +58,7 @@ import me.rerere.workspace.RootfsInstallStage
 import me.rerere.rikkahub.data.backup.BackupPhase
 import me.rerere.rikkahub.data.backup.BackupTaskKind
 import me.rerere.rikkahub.data.backup.BackupTaskState
+import me.rerere.rikkahub.data.backup.WorkspaceRestoreMapping
 import me.rerere.rikkahub.ui.pages.backup.BackupTarget
 import me.rerere.rikkahub.ui.pages.backup.BackupVM
 import me.rerere.rikkahub.ui.pages.backup.components.BackupActionIcon
@@ -498,6 +499,7 @@ fun ImportExportTab(
     pendingRestore?.let { pending ->
         WorkspaceRestoreDialog(
             manifest = pending.manifest,
+            localWorkspaces = workspaces,
             onDismiss = { vm.dismissPendingWorkspaceRestore() },
             onConfirm = { selection -> vm.startWorkspaceRestore(selection) },
         )
@@ -631,6 +633,7 @@ private fun WorkspacePickerDialog(
 @Composable
 private fun WorkspaceRestoreDialog(
     manifest: WorkspaceBackupManifest,
+    localWorkspaces: List<WorkspaceEntity>,
     onDismiss: () -> Unit,
     onConfirm: (WorkspaceRestoreSelection) -> Unit,
 ) {
@@ -639,6 +642,14 @@ private fun WorkspaceRestoreDialog(
     var pickedFiles by remember { mutableStateOf(fileRoots) }
     var pickedLinux by remember { mutableStateOf(linuxRoots) }
     var mode by remember { mutableStateOf(WorkspaceRestoreMode.REPLACE) }
+    // 与执行端同一套映射逻辑，勾选或列表变化时重算，用户能看到每个工作区的实际去向
+    val targets = remember(manifest, localWorkspaces, pickedFiles, pickedLinux) {
+        WorkspaceRestoreMapping.resolve(
+            manifestWorkspaces = manifest.workspaces,
+            selectedRoots = pickedFiles + pickedLinux,
+            localWorkspaces = localWorkspaces,
+        ).associateBy { it.backupRoot }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -650,6 +661,17 @@ private fun WorkspaceRestoreDialog(
             ) {
                 manifest.workspaces.forEach { info ->
                     Text(info.name, modifier = Modifier.fillMaxWidth())
+                    targets[info.root]?.let { target ->
+                        Text(
+                            text = if (target.isNew) {
+                                stringResource(R.string.backup_page_restore_new_workspace, target.name)
+                            } else {
+                                stringResource(R.string.backup_page_restore_to_workspace, target.name)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (info.hasFiles) {
                         ToggleRow(
                             label = stringResource(R.string.backup_page_workspace) +
