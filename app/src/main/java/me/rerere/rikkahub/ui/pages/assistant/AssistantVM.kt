@@ -12,6 +12,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
+import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.memoryId
 import me.rerere.rikkahub.service.ChatService
@@ -34,6 +35,18 @@ class AssistantVM(
     fun addAssistant(assistant: Assistant) {
         viewModelScope.launch {
             settingsStore.update { it.copy(assistants = it.assistants.plus(assistant)) }
+        }
+    }
+
+    fun addLorebook(lorebook: Lorebook) {
+        viewModelScope.launch {
+            settingsStore.update { settings ->
+                if (settings.lorebooks.any { it.id == lorebook.id }) {
+                    settings
+                } else {
+                    settings.copy(lorebooks = settings.lorebooks + lorebook)
+                }
+            }
         }
     }
 
