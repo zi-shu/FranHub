@@ -48,7 +48,7 @@ object DatabaseMerge {
 
     private fun rewriteConversations(db: SQLiteDatabase, idMap: Map<String, String>, json: Json) {
         db.query(
-            "SELECT id, assistant_id, config, mode_injection_ids, lorebook_ids FROM conversation"
+            "SELECT id, assistant_id, config, mode_injection_ids, lorebook_ids FROM ConversationEntity"
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getString(0)
@@ -61,7 +61,7 @@ object DatabaseMerge {
                 val mappedMode = mapStringArrayField(modeIds, idMap, json)
                 val mappedLorebook = mapStringArrayField(lorebookIds, idMap, json)
                 db.execSQL(
-                    "UPDATE conversation SET assistant_id = ?, config = ?, mode_injection_ids = ?, lorebook_ids = ? WHERE id = ?",
+                    "UPDATE ConversationEntity SET assistant_id = ?, config = ?, mode_injection_ids = ?, lorebook_ids = ? WHERE id = ?",
                     arrayOf<Any?>(mappedAssistant, mappedConfig, mappedMode, mappedLorebook, id),
                 )
             }

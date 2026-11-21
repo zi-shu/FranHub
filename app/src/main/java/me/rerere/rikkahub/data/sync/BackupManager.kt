@@ -188,6 +188,15 @@ class BackupManager(
 
                     if (stagedDatabase.exists()) {
                         DatabaseBackup.normalize(context, stagedDatabase)
+                        // 先跑 Room 迁移把备份库升到当前 schema。增量合并的 SQL 直接按当前表名与列名
+                        // 查询，旧备份若在迁移前合并会报 no such table。
+                        val migrateRoom = AppDatabaseFactory.create(context, stagedDatabase.absolutePath)
+                        try {
+                            DatabaseBackup.checkpoint(migrateRoom.openHelper.writableDatabase)
+                        } finally {
+                            migrateRoom.close()
+                        }
+                        DatabaseBackup.removeSidecars(stagedDatabase)
                         if (mergeMode) {
                             val configuration = SQLiteConfiguration.configure(
                                 context,
@@ -215,7 +224,7 @@ class BackupManager(
                                 localSnapshot.delete()
                             }
                         }
-                        // Reject unsupported schemas before publishing; run supported old migrations on the copy.
+                        // 合并写入可能落在 WAL 里，发布前统一 checkpoint 并清掉边车文件。
                         val room = AppDatabaseFactory.create(context, stagedDatabase.absolutePath)
                         try {
                             DatabaseBackup.checkpoint(room.openHelper.writableDatabase)

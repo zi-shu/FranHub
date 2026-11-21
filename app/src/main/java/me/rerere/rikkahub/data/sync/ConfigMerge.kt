@@ -242,16 +242,27 @@ class ConfigMerge(private val json: Json) {
 
     private fun <T> mergeEntries(kind: String, backup: List<T>, local: List<T>, spec: EntrySpec<T>): List<T> {
         val result = backup.toMutableList()
+        // 已经配过对的备份条目不再参与后续匹配。默认助手的名字都是空串，
+        // 只按名字配对会互相抢，把两个助手的内容配反。
+        val matched = MutableList(result.size) { false }
         local.forEach { localItem ->
-            val index = result.indexOfFirst { sameName(spec.nameOf(it), spec.nameOf(localItem)) }
-            if (index < 0) {
+            val localId = spec.idOf(localItem)
+            var index = result.indices.firstOrNull { !matched[it] && spec.idOf(result[it]) == localId }
+            if (index == null) {
+                index = result.indices.firstOrNull {
+                    !matched[it] && sameName(spec.nameOf(result[it]), spec.nameOf(localItem))
+                }
+            }
+            if (index == null) {
                 result.add(localItem)
+                matched.add(false)
                 plan += MergePlanItem(kind, spec.nameOf(localItem), MergeAction.LOCAL_ONLY)
                 return@forEach
             }
+            matched[index] = true
             val backupItem = result[index]
             if (fingerprint(spec.serializer, backupItem) == fingerprint(spec.serializer, localItem)) {
-                idMap[spec.idOf(backupItem)] = spec.idOf(localItem)
+                idMap[spec.idOf(backupItem)] = localId
                 result[index] = localItem
                 plan += MergePlanItem(kind, spec.nameOf(backupItem), MergeAction.SKIP)
             } else {
@@ -265,6 +276,7 @@ class ConfigMerge(private val json: Json) {
                 idMap[spec.idOf(backupItem)] = newId
                 result[index] = renamed
                 result.add(localItem)
+                matched.add(false)
                 plan += MergePlanItem(
                     kind = kind,
                     name = spec.nameOf(backupItem),
@@ -273,8 +285,8 @@ class ConfigMerge(private val json: Json) {
                 )
             }
         }
-        backup.forEach { backupItem ->
-            if (local.none { sameName(spec.nameOf(it), spec.nameOf(backupItem)) }) {
+        backup.forEachIndexed { index, backupItem ->
+            if (!matched[index] && local.none { sameName(spec.nameOf(it), spec.nameOf(backupItem)) }) {
                 plan += MergePlanItem(kind, spec.nameOf(backupItem), MergeAction.IMPORT)
             }
         }

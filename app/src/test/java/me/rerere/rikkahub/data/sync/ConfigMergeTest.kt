@@ -250,4 +250,30 @@ class ConfigMergeTest {
         assertEquals(1, result.settings.assistants.size)
         assertEquals(assistant1.id, result.settings.assistants[0].id)
     }
+
+    @Test
+    fun `同名助手先按 id 配对 不因空名互相抢`() {
+        // 两个默认助手名字都是空串，本地顺序与备份相反。
+        // 只按名字配对会把有内容的那份配到空的那份上，产生「(2)」条目。
+        val contentId = Uuid.random()
+        val emptyId = Uuid.random()
+        val backupContent = Assistant(id = contentId, name = "", systemPrompt = "有内容")
+        val backupEmpty = Assistant(id = emptyId, name = "", systemPrompt = "")
+        val localContent = Assistant(id = contentId, name = "", systemPrompt = "有内容")
+        val localEmpty = Assistant(id = emptyId, name = "", systemPrompt = "")
+
+        val result = merge(
+            backup = Settings(assistants = listOf(backupContent, backupEmpty)),
+            local = Settings(assistants = listOf(localEmpty, localContent)),
+        )
+
+        assertEquals(2, result.settings.assistants.size)
+        assertEquals(setOf(contentId, emptyId), result.settings.assistants.map { it.id }.toSet())
+        assertEquals(
+            "有内容",
+            result.settings.assistants.first { it.id == contentId }.systemPrompt,
+        )
+        assertEquals("", result.settings.assistants.first { it.id == emptyId }.systemPrompt)
+        assertTrue(result.plan.none { it.action == MergeAction.RENAME_IMPORT })
+    }
 }
