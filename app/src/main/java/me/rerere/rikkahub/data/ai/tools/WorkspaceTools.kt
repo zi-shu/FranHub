@@ -316,8 +316,11 @@ private fun createShellTool(
             // 长命令执行期间进前台: 屏幕关闭后系统会把后台进程按停(进程状态变 t),
             // proot 的 ptrace 随之卡死, 命令既不结束也不退出
             val useForeground = timeoutMillis >= SHELL_FOREGROUND_THRESHOLD_MS
-            if (useForeground) {
-                ShellForegroundService.start(appContext, command.take(60))
+            // 一条命令一个令牌。多条命令并行时共用同一个服务, 先结束的命令只释放自己的令牌,
+            // 不会把服务连同别人排队中的启动请求一起停掉。
+            val foregroundToken = if (useForeground) Uuid.random().toString() else null
+            if (foregroundToken != null) {
+                ShellForegroundService.acquire(appContext, foregroundToken, command.take(60))
             }
             // 同时持有 PARTIAL_WAKE_LOCK: 设备深度睡眠会让单调时钟停走,
             // sleep 与 timeout 的计时随之冻结, 而界面墙钟照走, 表现为"到点了命令还在跑"
@@ -336,8 +339,8 @@ private fun createShellTool(
             } finally {
                 System.err.println("[FranHubShell] 工具收尾 completed=$completed")
                 releaseShellWakeLock(wakeLock)
-                if (useForeground) {
-                    ShellForegroundService.stop(appContext)
+                if (foregroundToken != null) {
+                    ShellForegroundService.release(appContext, foregroundToken)
                 }
             }
         }
